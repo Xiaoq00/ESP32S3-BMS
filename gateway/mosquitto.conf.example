@@ -1,0 +1,9 @@
+# RK3566 上的 Mosquitto 配置（自定义固件用）
+# 仅局域网内使用；若 RK3566 已做内网穿透并暴露 1883，请务必加密码（见下）
+listener 1883 0.0.0.0
+allow_anonymous true
+
+# 如需鉴权（穿透暴露了 1883 时建议开启）：
+# allow_anonymous false
+# password_file /etc/mosquitto/passwd
+# 生成密码：sudo mosquitto_passwd -c /etc/mosquitto/passwd jkbms

@@ -1,0 +1,53 @@
+# ===== 编译产物（ESP32 / Arduino）=====
+.build/
+build/
+.jkbuild/
+*.bin
+*.elf
+*.map
+*.partitions.bin
+*.bootloader.bin
+*.merged.bin
+sketch/
+# arduino-cli / 平台缓存
+*.o
+*.d
+
+# ===== Python =====
+__pycache__/
+*.pyc
+venv/
+.venv/
+env/
+
+# ===== 运行期产生的数据（不要入库）=====
+*.jsonl
+history.jsonl
+agg.json
+latest.json
+/opt/jk-bms/*.json
+/opt/jk-bms/*.jsonl
+data/
+
+# ===== 日志 & 备份 =====
+*.log
+*.bak
+*.old
+*.tmp
+
+# ===== 依赖参考目录（第三方协议资料，非本项目代码）=====
+jk-ref/
+mini-pc-network-log/
+
+# ===== 操作系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ===== 密钥（任何真实凭证都不要提交）=====
+*.key
+*.pem
+id_rsa
+secrets.env
+.env

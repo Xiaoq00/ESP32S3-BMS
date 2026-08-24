@@ -1,0 +1,14 @@
+[Unit]
+Description=JK-BMS MQTT Recorder (latest.json + history.jsonl)
+After=network.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/recorder.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
