@@ -42,8 +42,14 @@
 
 ```
 jk-bms-gateway/
-├── esp32-firmware/
-│   └── jk-bms-esp32s3.ino     # ESP32-S3 固件（NimBLE 读 BMS + PubSubClient 转发 MQTT）
+├── esp32-firmware/            # ESP32-S3 独立固件包
+│   └── jk-bms-esp32s3/        # Arduino sketch 目录（同名 .ino）
+│       ├── jk-bms-esp32s3.ino # S3 固件源码（已脱敏）
+│       └── README.md          # S3 编译、烧录与配置说明
+├── esp32c3-firmware/          # ESP32-C3 独立固件包
+│   └── jk-bms-esp32c3/        # Arduino sketch 目录（同名 .ino）
+│       ├── jk-bms-esp32c3.ino # C3 固件源码（已脱敏）
+│       └── README.md          # C3 编译、DIO 烧录与配置说明
 ├── gateway/                   # 小主机侧后端（Python）
 │   ├── app.py                 # Flask 看板 + /api/set 写指令转发
 │   ├── recorder.py            # 订阅 jk-bms/state 落盘 latest.json / history.jsonl / agg.json
@@ -79,7 +85,10 @@ jk-bms-gateway/
 
 ### 1. 修改配置区（部署前必做）
 
-打开 `esp32-firmware/jk-bms-esp32s3.ino`，改顶部「配置区」常量：
+分别打开对应包内的 `.ino` 文件，修改顶部「配置区」常量：
+
+- S3：`esp32-firmware/jk-bms-esp32s3/jk-bms-esp32s3.ino`
+- C3：`esp32c3-firmware/jk-bms-esp32c3/jk-bms-esp32c3.ino`
 
 ```cpp
 #define BMS_MAC       "AA:BB:CC:DD:EE:FF"   // ← 改成你的 BMS 蓝牙 MAC（JK App 设备信息里看）
@@ -94,27 +103,36 @@ static const uint32_t JK_PASSWORD = 0;      // 6 位设备密码 "000000" -> 0�
 
 ### 2. 编译（arduino-cli）
 
+S3 和 C3 是两个独立固件包，按实际使用的板子选择其一：
+
 ```bash
+# ESP32-S3
 arduino-cli compile -b esp32:esp32:esp32s3 \
-  --output-dir .build \
-  esp32-firmware/jk-bms-esp32s3.ino
-# 产物：.build/jk-bms-esp32s3.ino.merged.bin
+  --output-dir .build-s3 \
+  esp32-firmware/jk-bms-esp32s3
+
+# ESP32-C3（无串口芯片的原生 USB 板必须打开 CDC；C3 闪存按包内 README 使用 DIO）
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashMode=dio,FlashFreq=40 \
+  --output-dir .build-c3 \
+  esp32c3-firmware/jk-bms-esp32c3
 ```
+
+详细 C3 烧录步骤（包括 DIO bootloader）见
+[`esp32c3-firmware/README.md`](esp32c3-firmware/README.md)。
 
 ### 3. 烧录（小主机上 esptool）
 
 ```bash
-# 1) 把 merged.bin 传到小主机
-scp .build/jk-bms-esp32s3.ino.merged.bin root@192.168.1.26:/tmp/jkfw.bin
-
-# 2) 小主机上先释放串口占用，再烧录
+# S3 示例：把 S3 merged.bin 传到小主机
+scp .build-s3/jk-bms-esp32s3.ino.merged.bin root@192.168.1.26:/tmp/jkfw-s3.bin
 ssh root@192.168.1.26
-fuser -k /dev/ttyUSB0            # 杀掉占用串口的进程（如残留 picocom）
+fuser -k /dev/ttyUSB0
 esptool --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 \
-  write_flash -z 0x0 /tmp/jkfw.bin
+  write_flash -z 0x0 /tmp/jkfw-s3.bin
 ```
 
-烧录后串口默认 115200  baud，可看到 `TELEMETRY V=...` 心跳行即正常。
+烧录后串口默认 115200 baud，可看到 `TELEMETRY V=...` 心跳行即正常。
 
 ---
 
