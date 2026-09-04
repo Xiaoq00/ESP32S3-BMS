@@ -1,0 +1,63 @@
+#!/bin/sh
+# JK-BMS 小主机网络自动切换器
+#
+# 设计理念：
+# 1. eth0 和 wlan0 不能同时占用 192.168.1.26，避免 ARP 混乱和 MQTT/SSH 漂移。
+# 2. 插入实体网线时，有线优先；关闭 WiFi 射频，减少不必要的无线链路。
+# 3. 拔掉实体网线时，重新打开 WiFi，优先连接卧室路由器；失败再尝试工具间路由器。
+# 4. MQTT、Flask 看板、C3 固件始终使用同一个服务地址 192.168.1.26，不需要改应用配置。
+#
+# 这是 NetworkManager dispatcher 脚本：NetworkManager 在网卡状态变化时调用它，
+# 不是后台死循环，也不需要修改网卡驱动。脚本必须由 root 执行。
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LOG_TAG=jk-bms-link-switch
+WIRED_IF=eth0
+WIFI_IF=wlan0
+WIRED_CONN="Wired connection 1"
+BEDROOM_CONN="jk-bms-bedroom-wifi"
+TOOLROOM_CONN="jk-bms-toolroom-wifi"
+
+log() {
+    logger -t "$LOG_TAG" -- "$*"
+}
+
+# 防止 NetworkManager 连续发出多个重复事件时并发切换。
+exec 9>/run/lock/jk-bms-link-switch.lock
+flock -n 9 || exit 0
+
+IFACE="$1"
+ACTION="$2"
+
+# 只处理实体网卡 eth0 的 up/down 事件。
+[ "$IFACE" = "$WIRED_IF" ] || exit 0
+
+case "$ACTION" in
+    up)
+        log "检测到实体网线接入，切换到有线网络"
+        # 先关闭 WiFi 连接和射频，确保 192.168.1.26 只由 eth0 使用。
+        nmcli radio wifi off || log "关闭 WiFi 射频失败"
+        nmcli connection down "$BEDROOM_CONN" >/dev/null 2>&1 || true
+        nmcli connection down "$TOOLROOM_CONN" >/dev/null 2>&1 || true
+        # eth0 通常已经由 NetworkManager 自动激活；这里再次确认固定有线连接。
+        nmcli connection up "$WIRED_CONN" ifname "$WIRED_IF" >/dev/null 2>&1 || log "激活有线连接失败"
+        log "有线优先处理完成"
+        ;;
+    down)
+        log "检测到实体网线拔出，恢复 WiFi 网络"
+        # 先释放有线连接的固定地址，再打开无线，避免同 IP 冲突。
+        nmcli connection down "$WIRED_CONN" >/dev/null 2>&1 || true
+        nmcli radio wifi on || log "打开 WiFi 射频失败"
+        # 卧室 WiFi 信号强、优先级高；若不可用，再尝试工具间 WiFi。
+        if nmcli connection up "$BEDROOM_CONN" ifname "$WIFI_IF" >/dev/null 2>&1; then
+            log "已连接卧室 WiFi 配置"
+        elif nmcli connection up "$TOOLROOM_CONN" ifname "$WIFI_IF" >/dev/null 2>&1; then
+            log "卧室 WiFi 不可用，已连接工具间 WiFi 配置"
+        else
+            log "两个已保存 WiFi 配置都连接失败"
+        fi
+        ;;
+    *)
+        exit 0
+        ;;
+esac
