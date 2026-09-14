@@ -1,0 +1,17 @@
+[Unit]
+# JK-BMS 链路对账：开机兜底 + 定时兜底
+#
+# 为什么需要开机执行一次？
+# 旧版只有 dispatcher（事件驱动）。如果开机时网线本来就插着，
+# eth0 不会产生 "up" 事件，脚本永远不会运行，WiFi 射频就可能一直保持关闭。
+# 这个 oneshot 服务在 NetworkManager 就绪后强制对账一次，覆盖"开机即目标状态"的场景。
+Description=JK-BMS network link reconcile (wired preferred, wifi fallback)
+After=NetworkManager.service network-online.target
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jk-bms-link-reconcile.sh
+# 允许失败：网络尚未就绪时不应该让服务进入 failed 状态反复告警，
+# 定时器会在 30 秒后再次纠正。
+SuccessExitStatus=0 1

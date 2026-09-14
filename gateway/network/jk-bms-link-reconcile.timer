@@ -1,0 +1,19 @@
+[Unit]
+# JK-BMS 链路对账定时器：每 30 秒兜底纠偏一次
+#
+# 设计理念：事件驱动（dispatcher）负责"快"，定时对账负责"稳"。
+# 事件可能丢、脚本可能被跳过、射频状态可能被外部改乱，
+# 但只要每 30 秒对账一次，系统就会自己回到正确状态，无需人工介入。
+#
+# 为什么不改成更短的间隔？30 秒是"恢复速度"与"系统开销"的折中；
+# 真正的即时切换仍由 dispatcher 秒级完成，定时器只是保险。
+Description=Run JK-BMS network link reconcile every 30s
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=jk-bms-link-reconcile.service
+
+[Install]
+WantedBy=timers.target

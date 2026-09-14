@@ -181,49 +181,98 @@ sudo systemctl enable --now jk-bms-recorder
 ### 4. 小主机有线 / WiFi 自动切换（长期运行机制）
 
 小主机网络切换不是 C3 固件逻辑，也不是重新编写网卡驱动，而是 Linux
-NetworkManager 的 dispatcher 事件机制。网卡驱动只负责报告 `eth0` 的物理链路
-状态；NetworkManager 在插拔网线时调用 `gateway/network/99-jk-bms-link-switch`。
+NetworkManager 之上的**幂等对账**机制。
 
-当前设计理念：
+#### 4.1 设计理念：事件驱动负责"快"，定时对账负责"稳"
 
-- 插入网线：优先使用 `eth0`，关闭 `wlan0`，由有线网卡独占服务地址 `192.168.1.26`；
-- 拔掉网线：释放有线地址，打开 `wlan0`，自动连接已保存的 WiFi；
-- 卧室 WiFi 优先级高，工具间 WiFi 作为备用；
-- Mosquitto、Flask 看板、recorder 和 C3 固件始终访问 `192.168.1.26`，应用层不用感知链路变化；
-- 通过 `flock` 防止 NetworkManager 重复事件并发执行；
-- 有线和无线不能同时占用 `192.168.1.26`，这是避免 ARP 混乱的关键约束。
+| 层次 | 文件 | 职责 |
+|---|---|---|
+| 事件快路径 | `/etc/NetworkManager/dispatcher.d/99-jk-bms-link-switch` | 插拔网线时秒级响应，转交对账脚本 |
+| 核心逻辑 | `/usr/local/sbin/jk-bms-link-reconcile.sh` | 幂等判断与纠正，唯一真相来源 |
+| 开机兜底 | `jk-bms-link-reconcile.service` | 开机后强制对账一次 |
+| 定时兜底 | `jk-bms-link-reconcile.timer` | 每 30 秒对账一次，自愈 |
 
-脚本已部署到小主机：
+判断依据是**"有线是否真的可用"**，而不是"网线插没插"：
 
 ```text
-/etc/NetworkManager/dispatcher.d/99-jk-bms-link-switch
+有线有载波 且 有线有 IPv4  → 有线可用 → 关闭无线射频
+否则                        → 有线不可用 → 打开无线射频并连接
 ```
 
-脚本带有逐行中文注释。后续维护者如果忘记机制，先看脚本顶部的“设计理念”，
-再看下面的连接名常量，不要直接修改 C3 固件来解决网络切换问题。
+`Mosquitto / Flask 看板 / recorder / C3 固件` 始终访问 `192.168.1.26`，
+应用层完全不感知链路变化。有线和无线**不能同时**占用 `192.168.1.26`。
 
-安装 / 恢复命令：
+#### 4.2 历史故障复盘（2026-09-14，务必保留这段）
+
+第一版脚本只在 `eth0` 的 `up/down` 事件里动作，其中插网线时执行
+`nmcli radio wifi off`。结果导致拔掉网线后 WiFi 再也不自动连接。
+
+**根因**：射频开关是「有记忆」的持久化状态，会被写进
+`/var/lib/NetworkManager/NetworkManager.state`，**重启后依然保持关闭**。
+而开机时如果网线本来就插着，`eth0` 不会产生 `up` 事件，脚本永远不运行，
+于是没有任何代码执行 `nmcli radio wifi on`。
+
+**教训（可迁移的原则）**：
+
+> 只在「状态发生变化」时运行的脚本，覆盖不了「开机时就处于目标状态」的场景。
+> 正确性必须由**幂等对账**保证，事件驱动只能用来加速。
+
+#### 4.3 安装 / 升级
 
 ```bash
+# 把 gateway/network/ 整个目录拷到小主机后：
+sudo sh gateway/network/install.sh
+```
+
+或手工安装：
+
+```bash
+sudo install -m 0755 gateway/network/jk-bms-link-reconcile.sh /usr/local/sbin/
 sudo install -m 0755 gateway/network/99-jk-bms-link-switch \
   /etc/NetworkManager/dispatcher.d/99-jk-bms-link-switch
-sudo systemctl restart NetworkManager
+sudo install -m 0644 gateway/network/jk-bms-link-reconcile.service /etc/systemd/system/
+sudo install -m 0644 gateway/network/jk-bms-link-reconcile.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jk-bms-link-reconcile.timer
 ```
 
-验证命令：
+#### 4.4 排查命令
 
 ```bash
+systemctl list-timers jk-bms-link-reconcile.timer
+journalctl -t jk-bms-link-reconcile -n 50 --no-pager
+nmcli radio            # 确认 WIFI 是否为 enabled
 nmcli device status
-ip -4 addr
-ip route
-journalctl -t jk-bms-link-switch --since today
+cat /var/lib/NetworkManager/NetworkManager.state   # WirelessEnabled=true/false
+ip -4 addr; ip route
 curl http://192.168.1.26:8899/api/summary
 ```
 
-更换路由器时，只需要在小主机 NetworkManager 中更新已保存 WiFi 的 SSID / 密码。
-只要新路由器仍使用 `192.168.1.x` 网段和服务地址，MQTT、看板及 C3 固件无需修改。
-如果新路由器名称和密码不变，则无需重新配置；如果名称或密码变化，必须先通过网线
-或本地终端保存一次新 WiFi 凭据，系统不会凭空知道未知密码。
+若发现 `wlan0` 显示 `unavailable`，说明射频被关闭，执行：
+
+```bash
+sudo nmcli radio wifi on
+```
+
+#### 4.5 已知遗留问题：有线 MAC 与路由器绑定不一致
+
+路由器里 `192.168.1.26` 绑定的是**无线网卡** MAC `08:E9:F6:D5:9C:66`，
+而有线网卡实际 MAC 是 `3A:2F:FC:3C:07:81`（Armbian 的随机化 MAC）。
+有线使用静态 `.26` 时可能与路由器的 IP-MAC 绑定策略冲突，表现为**高丢包**。
+
+可选处理方式（择一）：
+
+1. 在路由器里把有线 MAC 也绑定到 `192.168.1.26`；
+2. 给有线连接克隆无线 MAC，使两者对路由器呈现同一身份：
+   `nmcli connection modify "Wired connection 1" ethernet.cloned-mac-address 08:E9:F6:D5:9C:66`
+3. 关闭路由器的 IP-MAC 绑定强制策略。
+
+#### 4.6 更换路由器
+
+只需在小主机 NetworkManager 中更新已保存 WiFi 的 SSID / 密码。只要新路由器
+仍使用 `192.168.1.x` 网段和服务地址，MQTT、看板及 C3 固件无需修改。名称与密码
+不变则无需任何操作；若变化，必须先通过网线或本地终端保存一次新凭据——系统不会
+凭空知道未知密码。
 
 ---
 
