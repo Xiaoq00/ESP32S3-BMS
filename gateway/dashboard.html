@@ -74,7 +74,7 @@
   .wbtn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:var(--lbl);font-weight:700;cursor:pointer}
   .wbtn.sec{background:#fff;color:var(--accent);border:1px solid var(--accent)}
   .wbtn:active{transform:translateY(1px)}
-  #wave{width:100%;height:220px;display:block}
+  #wave{width:100%;height:240px;display:block}
   .wstat{font-size:var(--mid);font-weight:800;margin:2px 0 8px;color:var(--fg)}
   .wmsg{font-size:var(--lbl);color:var(--mut);text-align:center;padding:24px 0}
 
@@ -375,8 +375,12 @@ async function loadHistory(){
       waveData=await r.json();
       drawWave();
       if(curRange==='day'){
-        let s='今日用电 '+(waveData.today_energy_kwh!=null?waveData.today_energy_kwh.toFixed(2):'—')+' kWh';
-        if(waveData.peak_cell_delta_mv!=null) s+='　·　今日峰值压差 '+waveData.peak_cell_delta_mv.toFixed(0)+'mV'+(waveData.peak_cell_delta_cell?('（第'+waveData.peak_cell_delta_cell+'节）'):'');
+        const f2=v=>v!=null?v.toFixed(2):'—';
+        const hh=h=>(h!=null?String(h).padStart(2,'0')+':00':'—');
+        let s='今日放电 '+f2(waveData.discharge_kwh)+' kWh';
+        if(waveData.charge_kwh) s+='　·　充电 '+f2(waveData.charge_kwh)+' kWh';
+        if(waveData.peak_discharge_kwh!=null) s+='　·　放电峰 '+f2(waveData.peak_discharge_kwh)+'（'+hh(waveData.peak_discharge_hour)+'）';
+        if(waveData.peak_cell_delta_mv!=null) s+='　·　峰值压差 '+waveData.peak_cell_delta_mv.toFixed(0)+'mV';
         $('waveStat').textContent=s;
       } else {
         // 周/月：显示该区间内出现过的每日最大压差峰值 + 异常电芯（均衡/压差总会用）
@@ -391,75 +395,106 @@ async function loadHistory(){
 function drawWave(){
   const cv=$('wave'); if(!cv) return;
   const dpr=window.devicePixelRatio||1;
-  const W=cv.clientWidth||cv.parentElement.clientWidth, H=220;
+  const W=cv.clientWidth||cv.parentElement.clientWidth, H=240;
   cv.width=W*dpr; cv.height=H*dpr;
   const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,W,H);
   const series=(waveData&&waveData.series)||[];
   if(!series.length){ $('waveMsg').style.display='block'; $('waveMsg').textContent='暂无数据（看板在线后开始累计）'; return; }
   $('waveMsg').style.display='none';
+  if(waveData.unit==='hour') drawDayBars(ctx,W,H,series);
+  else drawWeekMonth(ctx,W,H,series);
+}
 
+// 天：以中间 0 线为基准的发散柱状图 —— 放电向上(橙)、充电向下(蓝)
+// 数据约定：series[i].energy_kwh 正=放电、负=充电（后端 /api/history?range=day 给出）
+function drawDayBars(ctx,W,H,series){
+  const padL=42,padR=10,padT=16,padB=26;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  const y0=padT+plotH/2, half=plotH/2;          // 0 线居中，上下各半
+  const maxAbs=Math.max(0.05,...series.map(s=>Math.abs(s.energy_kwh||0)));
+  const top=Math.max(0.05,Math.ceil(maxAbs*20)/20);   // 以 0.05 为步长向上取整
+  const Y=v=>y0-(v/top)*half;
+  const grid='#eef2f6', mut='#9aa7b5';
+
+  // 网格
+  ctx.strokeStyle=grid; ctx.lineWidth=1;
+  [top,top/2,-top/2,-top].forEach(v=>{ const y=Y(v); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke(); });
+  for(let h=0;h<=24;h+=3){ const x=padL+h/24*plotW; ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+plotH); ctx.stroke(); }
+  // 0 线（加粗）
+  ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(padL,y0); ctx.lineTo(padL+plotW,y0); ctx.stroke();
+
+  // 柱子
+  const slot=plotW/24, bw=Math.min(18,Math.max(5,slot*0.72));
+  series.forEach((s,i)=>{
+    const v=s.energy_kwh||0; if(!v) return;
+    const cx=padL+(i+0.5)*slot, hgt=Math.abs(v)/top*half;
+    ctx.fillStyle=v>0?'#ef8b5a':'#5b9bd5';
+    const x=cx-bw/2, y=v>0?y0-hgt:y0;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x,y,bw,hgt,2); else ctx.rect(x,y,bw,hgt);
+    ctx.fill();
+  });
+
+  // 数值标注：屏够宽就每小时标，窄屏每 2 小时标一次；峰值始终标
+  const everyHour=slot>=22;
+  const pd=series.reduce((a,b)=>((b.energy_kwh||0)>(a.energy_kwh||0)?b:a),series[0]);
+  const pc=series.reduce((a,b)=>((b.energy_kwh||0)<(a.energy_kwh||0)?b:a),series[0]);
+  ctx.font='10px system-ui'; ctx.textAlign='center';
+  series.forEach((s,i)=>{
+    const v=s.energy_kwh||0; if(!v) return;
+    const isPeak=(s===pd||s===pc);
+    if(!everyHour && i%2!==0 && !isPeak) return;
+    const cx=padL+(i+0.5)*slot, hgt=Math.abs(v)/top*half;
+    const ly=v>0?y0-hgt-4:y0+hgt+11;
+    const txt=Math.abs(v).toFixed(2);
+    ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.strokeText(txt,cx,ly);   // 白描边，压线也看得清
+    ctx.fillStyle=v>0?'#a8431f':'#1a5a91'; ctx.fillText(txt,cx,ly);
+  });
+
+  // 坐标轴
+  ctx.fillStyle=mut; ctx.font='11px system-ui'; ctx.textAlign='right';
+  ctx.fillText(top.toFixed(2),padL-6,Y(top)+4);
+  ctx.fillText('0',padL-6,y0+4);
+  ctx.fillText('-'+top.toFixed(2),padL-6,Y(-top)+4);
+  ctx.textAlign='center';
+  for(let h=0;h<=24;h+=3){ ctx.fillText(('0'+h).slice(-2)+':00',padL+h/24*plotW,H-8); }
+  ctx.textAlign='left';
+}
+
+// 周/月：柱=每日用电量(kWh) + 线=日均功率(W，向上=用电)
+function drawWeekMonth(ctx,W,H,series){
   const padL=46,padR=12,padT=16,padB=26;
   const plotW=W-padL-padR, plotH=H-padT-padB;
   const blue='#1c7ed6', mut='#9aa7b5', grid='#eef2f6';
   ctx.strokeStyle=grid; ctx.lineWidth=1;
   for(let i=0;i<=4;i++){ const y=padT+plotH*i/4; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke(); }
-
-  if(waveData.unit!=='day'){
-    // 周/月：柱=每日用电量(kWh) + 线=日均功率(W，向上=用电)
-    const n=series.length;
-    const maxE=Math.max(0.001,...series.map(b=>b.energy_kwh||0));
-    const maxP=Math.max(1,...series.map(b=>-(b.power||0)));
-    const bw=Math.max(6, plotW/n*0.62);
-    series.forEach((b,i)=>{
-      const cx=padL+(i+0.5)/n*plotW;
-      const eh=(b.energy_kwh||0)/maxE*plotH;
-      ctx.fillStyle='rgba(226,59,59,.55)';
-      ctx.fillRect(cx-bw/2, padT+plotH-eh, bw, eh);
-    });
-    ctx.beginPath();
-    series.forEach((b,i)=>{
-      const cx=padL+(i+0.5)/n*plotW;
-      const py=padT+plotH-(-(b.power||0))/maxP*plotH;
-      i?ctx.lineTo(cx,py):ctx.moveTo(cx,py);
-    });
-    ctx.strokeStyle=blue; ctx.lineWidth=2; ctx.stroke();
-    ctx.fillStyle=mut; ctx.font='12px system-ui'; ctx.textAlign='left';
-    ctx.fillText('柱=每日用电量(kWh)  线=日均功率(W)', padL, padT-3);
-    ctx.textAlign='center';
-    [0, Math.floor(n/2), n-1].forEach(i=>{
-      const d=new Date(series[i].t); const lbl=(d.getMonth()+1)+'/'+d.getDate();
-      ctx.fillText(lbl, padL+(i+0.5)/n*plotW, H-8);
-    });
-    ctx.textAlign='left';
-  } else {
-    // 天：连续时间功率曲线（consumption 向上为正）
-    const pts=series.map(s=>({x:s.t, y:-(s.power||0)}));
-    const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
-    let ymin=Math.min(0,...ys), ymax=Math.max(0,...ys);
-    if(ymax-ymin<2){ ymax=ymin+2; }
-    const t0=Math.min(...xs), t1=Math.max(...xs);
-    const X=t=> padL + (t1>t0?(t-t0)/(t1-t0):0.5)*plotW;
-    const Y=v=> padT + (ymax-v)/(ymax-ymin)*plotH;
-    ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(padL,Y(0)); ctx.lineTo(padL+plotW,Y(0)); ctx.stroke();
-    ctx.beginPath();
-    pts.forEach((p,i)=>{ const xx=X(p.x),yy=Y(p.y); i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
-    ctx.lineTo(X(pts[pts.length-1].x), Y(0)); ctx.lineTo(X(pts[0].x), Y(0)); ctx.closePath();
-    ctx.fillStyle='rgba(28,126,214,.12)'; ctx.fill();
-    ctx.beginPath();
-    pts.forEach((p,i)=>{ const xx=X(p.x),yy=Y(p.y); i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
-    ctx.strokeStyle=blue; ctx.lineWidth=2; ctx.stroke();
-    ctx.fillStyle=mut; ctx.font='12px system-ui'; ctx.textAlign='left';
-    ctx.fillText('↑用电  ↓充电 (W)', padL, padT-3);
-    ctx.fillText(Math.round(ymax)+'W', 4, padT+10);
-    ctx.fillText(Math.round(ymin)+'W', 4, padT+plotH);
-    ctx.textAlign='center';
-    const fmtH=t=>{ const d=new Date(t); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); };
-    ctx.fillText(fmtH(t0), padL, H-8);
-    ctx.fillText(fmtH(t1), padL+plotW, H-8);
-    ctx.textAlign='left';
-  }
+  const n=series.length;
+  const maxE=Math.max(0.001,...series.map(b=>b.energy_kwh||0));
+  const maxP=Math.max(1,...series.map(b=>-(b.power||0)));
+  const bw=Math.max(6, plotW/n*0.62);
+  series.forEach((b,i)=>{
+    const cx=padL+(i+0.5)/n*plotW;
+    const eh=(b.energy_kwh||0)/maxE*plotH;
+    ctx.fillStyle='rgba(226,59,59,.55)';
+    ctx.fillRect(cx-bw/2, padT+plotH-eh, bw, eh);
+  });
+  ctx.beginPath();
+  series.forEach((b,i)=>{
+    const cx=padL+(i+0.5)/n*plotW;
+    const py=padT+plotH-(-(b.power||0))/maxP*plotH;
+    i?ctx.lineTo(cx,py):ctx.moveTo(cx,py);
+  });
+  ctx.strokeStyle=blue; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle=mut; ctx.font='12px system-ui'; ctx.textAlign='left';
+  ctx.fillText('柱=每日用电量(kWh)  线=日均功率(W)', padL, padT-3);
+  ctx.textAlign='center';
+  [0, Math.floor(n/2), n-1].forEach(i=>{
+    const d=new Date(series[i].t); const lbl=(d.getMonth()+1)+'/'+d.getDate();
+    ctx.fillText(lbl, padL+(i+0.5)/n*plotW, H-8);
+  });
+  ctx.textAlign='left';
 }
 
 document.querySelectorAll('.tab').forEach(btn=>{

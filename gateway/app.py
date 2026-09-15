@@ -277,12 +277,20 @@ def history():
         return p
 
     if rng == "day":
-        pts = []
+        # 今日 00:00–24:00 按小时聚合，供前端画「以 0 线为基准的发散柱状图」。
+        # 每小时返回净电量 energy_kwh：正=放电（柱向上）、负=充电（柱向下）。
+        # 方向以 V*I 的符号判定（JK 约定：电流 I>0 为充电、I<0 为放电），
+        # 比直接用上报的 power 字段更可靠（个别固件 power 符号与电流不一致）。
+        lt = time.localtime(now)
+        today0 = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+        buckets = [{"e_wh": 0.0, "psum": 0.0, "n": 0, "pmax": 0.0, "soc": None}
+                   for _ in range(24)]
         peak_delta = 0.0; peak_delta_cell = None
+        prev_ts = None; prev_p = None
         try:
             with open(HISTORY, "rb") as f:
                 f.seek(0, 2); size = f.tell()
-                f.seek(max(0, size - 6 * 1024 * 1024))   # 读末尾最多 6MB（覆盖 24h@5s）
+                f.seek(max(0, size - 12 * 1024 * 1024))   # 读末尾最多 12MB（覆盖今日全部@5s）
                 tail = f.read().decode(errors="ignore")
             for line in tail.splitlines():
                 if not line.strip():
@@ -291,25 +299,65 @@ def history():
                     s = json.loads(line)
                 except Exception:
                     continue
-                ts = s.get("ts"); p = _p(s)
-                if ts is None or p is None:
+                ts = s.get("ts")
+                if ts is None:
                     continue
-                # 峰值压差(均衡用): 用 cells 数组直接算极值，记下最高的那节
+                v = s.get("voltage"); c = s.get("current")
+                p = (v * c) if (v is not None and c is not None) else _p(s)
+                if ts < today0 or ts > now:            # 今天之前的采样只用于给首个点做积分
+                    prev_ts, prev_p = ts, p
+                    continue
+                h = time.localtime(ts).tm_hour
+                b = buckets[h]
+                if p is not None:
+                    b["psum"] += p; b["n"] += 1
+                    b["pmax"] = max(b["pmax"], abs(p))
+                    # 梯形积分（Wh）：仅对合理间隔积分，跳过大间隔（重启/掉线）
+                    if prev_ts is not None and prev_p is not None:
+                        dt = ts - prev_ts
+                        if 0 < dt <= 3600:
+                            b["e_wh"] += (prev_p + p) / 2.0 * dt / 3600.0
+                sc = s.get("soc")
+                if sc is not None:
+                    b["soc"] = sc
+                # 峰值压差(均衡用)：只统计今天
                 cc = s.get("cells")
                 if cc and len(cc) >= 2:
                     dm = max(cc) - min(cc)
                     if dm > peak_delta:
                         peak_delta = dm; peak_delta_cell = cc.index(max(cc)) + 1
-                if ts >= now - 86400:
-                    pts.append((ts, p))
+                prev_ts, prev_p = ts, p
         except Exception:
             pass
-        pts.sort()
-        if len(pts) > 240:                              # 降采样到 <=240 点，手机图表更顺
-            step = len(pts) / 240.0
-            pts = [pts[int(i * step)] for i in range(240)]
-        out["series"] = [{"t": int(ts * 1000), "power": round(p, 1), "energy_kwh": None}
-                         for ts, p in pts]
+
+        series = []
+        for h in range(24):
+            b = buckets[h]
+            series.append({
+                "h": h,
+                "t": int((today0 + h * 3600) * 1000),
+                "energy_kwh": round(-b["e_wh"] / 1000.0, 3),   # 正=放电、负=充电
+                "power_avg": round(b["psum"] / b["n"], 1) if b["n"] else None,
+                "power_max": round(b["pmax"], 1) if b["n"] else None,
+                "soc": b["soc"],
+            })
+        out["unit"] = "hour"
+        out["series"] = series
+
+        dis = sum(x["energy_kwh"] for x in series if x["energy_kwh"] > 0)
+        chg = sum(-x["energy_kwh"] for x in series if x["energy_kwh"] < 0)
+        out["discharge_kwh"] = round(dis, 3)
+        out["charge_kwh"] = round(chg, 3)
+        out["net_kwh"] = round(dis - chg, 3)
+        out["today_energy_kwh"] = round(dis, 3)            # 兼容旧字段：今日放电量
+        pd_ = max(series, key=lambda x: x["energy_kwh"])
+        pc_ = min(series, key=lambda x: x["energy_kwh"])
+        if pd_["energy_kwh"] > 0:
+            out["peak_discharge_kwh"] = pd_["energy_kwh"]
+            out["peak_discharge_hour"] = pd_["h"]
+        if pc_["energy_kwh"] < 0:
+            out["peak_charge_kwh"] = round(-pc_["energy_kwh"], 3)
+            out["peak_charge_hour"] = pc_["h"]
         if peak_delta > 0:
             out["peak_cell_delta_mv"] = round(peak_delta * 1000, 1)
             out["peak_cell_delta_cell"] = peak_delta_cell
@@ -336,17 +384,18 @@ def history():
             series.append(item)
         out["series"] = series
 
-    # 今日用电量（来自聚合日桶）
-    try:
-        with open(AGG) as f:
-            agg = json.load(f)
-        lt = time.localtime(now)
-        today_key = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
-        ad = {int(k): v for k, v in agg.get("daily", {}).items()}
-        if today_key in ad:
-            out["today_energy_kwh"] = round(abs(ad[today_key].get("wh", 0)) / 1000.0, 3)
-    except Exception:
-        pass
+    # 今日用电量（来自聚合日桶）；day 分支已按小时精算过，不覆盖
+    if out.get("today_energy_kwh") is None:
+        try:
+            with open(AGG) as f:
+                agg = json.load(f)
+            lt = time.localtime(now)
+            today_key = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
+            ad = {int(k): v for k, v in agg.get("daily", {}).items()}
+            if today_key in ad:
+                out["today_energy_kwh"] = round(abs(ad[today_key].get("wh", 0)) / 1000.0, 3)
+        except Exception:
+            pass
 
     return json.dumps(out, ensure_ascii=False)
 
