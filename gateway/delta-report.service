@@ -1,0 +1,8 @@
+[Unit]
+Description=JK-BMS 电芯压差记录生成（只读 history/agg，写 delta_report.md + delta_log.csv）
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/delta_report.py --days 2 --out /opt/jk-bms/delta_report.md --csv /opt/jk-bms/delta_log.csv

@@ -1,0 +1,10 @@
+[Unit]
+Description=每小时刷新 JK-BMS 电芯压差记录
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=3600
+Unit=jk-bms-delta-report.service
+
+[Install]
+WantedBy=timers.target

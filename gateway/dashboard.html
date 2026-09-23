@@ -66,6 +66,12 @@
     font-size:var(--lbl);line-height:1.5;margin-bottom:12px;color:#143b66}
   .say b{color:#0b56b0}
 
+  /* 电芯压差告警（主页醒目显示） */
+  .alert{border-radius:14px;padding:13px 14px;font-size:var(--lbl);line-height:1.55;
+    margin-bottom:12px;font-weight:600}
+  .alert.warn{background:#fff8e6;border:1px solid #f0d48a;color:#8a6100}
+  .alert.bad{background:#fdecec;border:1px solid #f3b7b7;color:#a02323}
+
   /* 波形 */
   .tabs{display:flex;gap:8px;margin:4px 0 10px}
   .tab{flex:1;border:1px solid var(--line);background:#f6f9fc;color:var(--mut);
@@ -88,6 +94,8 @@
     <h1>电瓶状态</h1>
     <span id="pill" class="pill"><span class="d"></span><span id="pillt">在线</span></span>
   </div>
+
+  <div class="alert" id="alert" style="display:none"></div>
 
   <div id="demo" class="demo" style="display:none">演示数据（接口暂不可用，显示示例）</div>
 
@@ -272,12 +280,32 @@ async function load(){
   }
   $('tempV').textContent=txt; $('tempSub').textContent=sub;
 
-  // 均衡
+  // 均衡 + 电芯压差（主页醒目告警）
   const dmv = (j.cell_stats && j.cell_stats.delta_mv!=null)? j.cell_stats.delta_mv : null;
-  if(dmv!=null){ $('balV').textContent = dmv+' mV'; }
+  const cellsNow = j.cells||[];
+  let hiV=null, loV=null, hiI=0, loI=0;
+  if(cellsNow.length>=2){
+    hiV=Math.max(...cellsNow); loV=Math.min(...cellsNow);
+    hiI=cellsNow.indexOf(hiV)+1; loI=cellsNow.indexOf(loV)+1;
+  }
+  if(dmv!=null){ $('balV').textContent = Math.round(dmv)+' mV'; }
   else { $('balV').textContent='--'; }
-  if(dmv!=null){ $('balV').className='v '+(dmv<20?'g':dmv<50?'w':'b'); $('balSub').textContent = dmv<20?'压差小·均衡好':dmv<50?'压差一般':'压差大·需关注'; }
-  else { $('balV').className='v'; $('balSub').textContent='压差'; }
+  if(dmv!=null){
+    $('balV').className='v '+(dmv<30?'g':dmv<80?'w':'b');
+    let sub = dmv<30?'压差小·均衡好':(dmv<80?'压差偏大·需关注':'压差严重·必须处理');
+    if(hiI) sub += '（第'+hiI+'节最高）';
+    $('balSub').textContent = sub;
+  } else { $('balV').className='v'; $('balSub').textContent='压差'; }
+
+  // 顶部压差告警条：>=30mV 才出现，>=80mV 升级为红色严重
+  const al=$('alert');
+  if(dmv!=null && dmv>=30){
+    const bad = dmv>=80;
+    let t='<span style="font-size:var(--mid);font-weight:800;margin-right:8px">电芯压差 '+Math.round(dmv)+' mV</span>'+(bad?'严重不均衡':'偏大');
+    if(hiI) t+='<br>最高 第'+hiI+'节 '+hiV.toFixed(3)+'V　最低 第'+loI+'节 '+loV.toFixed(3)+'V';
+    if(bad) t+='<br>单节先到顶会触发保护，充电会立即中断（充不满、可用容量变小）。建议：先查该节采样线是否松动/氧化，再用小电流长时间慢充做均衡。';
+    al.className='alert '+(bad?'bad':'warn'); al.innerHTML=t; al.style.display='block';
+  } else { al.style.display='none'; }
 
   // 信号
   $('rssiV').textContent = (j.rssi!=null)? j.rssi+' dBm' : '--';
