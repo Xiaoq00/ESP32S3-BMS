@@ -6,118 +6,110 @@
 <title>电瓶状态</title>
 <style>
   :root{
-    --bg:#eef2f6; --card:#ffffff; --fg:#1c2733; --mut:#6b7a8d;
+    --bg:#f4f6f8; --card:#ffffff; --fg:#16212e; --mut:#6b7a8d;
     --ok:#1faa59; --warn:#e0a106; --bad:#e23b3b; --accent:#1c7ed6;
-    --line:#e2e8f0; --shadow:0 2px 10px rgba(20,40,70,.08);
-    --big:clamp(40px,13vw,68px); --mid:clamp(26px,7vw,34px); --lbl:clamp(15px,4.2vw,18px);
+    --line:#e6ebf0; --hair:#eef2f6;
+    --s2:12px; --s3:18px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0}
   body{background:var(--bg);color:var(--fg);
     font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-    line-height:1.35;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
-  .wrap{max-width:760px;margin:0 auto;padding:16px 14px 28px}
+    line-height:1.35;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:18px 14px 28px}
 
-  /* 顶部状态条 */
-  .head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-  .head .bt{width:46px;height:46px;flex:0 0 auto;color:var(--accent)}
-  .head h1{font-size:clamp(22px,6vw,28px);margin:0;font-weight:700;letter-spacing:1px}
-  .pill{margin-left:auto;display:inline-flex;align-items:center;gap:7px;
-    font-size:var(--lbl);font-weight:700;padding:8px 14px;border-radius:999px;background:#dfeede;color:var(--ok)}
-  .pill .d{width:11px;height:11px;border-radius:50%;background:var(--ok)}
+  /* 顶部：只留标题 + 状态药丸 */
+  .head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .head h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.5px}
+  .pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+    font-size:13px;font-weight:700;padding:6px 12px;border-radius:999px;background:#e3f4e8;color:var(--ok)}
+  .pill .d{width:9px;height:9px;border-radius:50%;background:var(--ok)}
   .pill.off{background:#fbe3e3;color:var(--bad)} .pill.off .d{background:var(--bad)}
-  .demo{background:#fff5d6;color:#8a6d00;border:1px solid #f0dD88;
-    font-size:var(--lbl);font-weight:700;padding:8px 12px;border-radius:10px;margin-bottom:12px;text-align:center}
-
-  /* 大卡片 */
-  .hero{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-  .big{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:16px}
-  .big .top{display:flex;align-items:center;gap:9px;color:var(--mut);font-size:var(--lbl);font-weight:600}
-  .big .top svg{width:24px;height:24px;color:var(--accent)}
-  .big .num{font-size:var(--big);font-weight:800;line-height:1.05;margin-top:8px;display:flex;align-items:baseline;gap:6px}
-  .big .num .u{font-size:var(--mid);font-weight:700;color:var(--mut)}
-  .batwrap{margin-top:10px}
-  .batwrap svg{width:100%;height:46px;display:block}
-
-  /* 指标网格 */
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-  .m{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:14px}
-  .m .top{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:var(--lbl);font-weight:600}
-  .m .top svg{width:22px;height:22px;color:var(--accent)}
-  .m .v{font-size:var(--mid);font-weight:800;margin-top:6px}
-  .m .sub{font-size:14px;color:var(--mut);margin-top:3px}
-  .g{color:var(--ok)} .w{color:var(--warn)} .b{color:var(--bad)}
-
-  /* 电芯 */
-  .sec{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
-  .sec .h{display:flex;align-items:center;gap:8px;font-size:var(--lbl);font-weight:700;color:var(--mut);margin-bottom:4px}
-  .sec .h svg{width:22px;height:22px;color:var(--accent)}
-  .legend{font-size:13px;color:var(--mut);margin:2px 0 12px;display:flex;gap:14px;flex-wrap:wrap}
-  .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-  .cells{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
-  .cell{background:#f6f9fc;border:1px solid var(--line);border-radius:12px;padding:9px 6px;text-align:center}
-  .cell .n{font-size:13px;color:var(--mut);font-weight:600}
-  .cell .vv{font-size:clamp(16px,4.6vw,19px);font-weight:800;margin-top:3px}
-  .cell .bar{height:7px;border-radius:4px;background:var(--line);margin-top:7px;overflow:hidden}
-  .cell .bar i{display:block;height:100%;border-radius:4px}
-  /* 均衡线电阻(参考值): 默认灰, 只有异常才转黄/红 —— 避免与电压那行抢注意力 */
-  .cell .rr{font-size:11px;font-weight:700;color:var(--mut);margin-top:2px;font-variant-numeric:tabular-nums}
-  .cell .rr.w{color:var(--warn)}
-  .cell .rr.b{color:var(--bad)}
-
-  .foot{text-align:center;color:var(--mut);font-size:14px;margin-top:6px}
-  .say{background:#eaf3ff;border:1px solid #cfe2ff;border-radius:14px;padding:13px 14px;
-    font-size:var(--lbl);line-height:1.5;margin-bottom:12px;color:#143b66}
-  .say b{color:#0b56b0}
-
-  /* 电芯压差告警（主页醒目显示） */
-  .alert{border-radius:14px;padding:13px 14px;font-size:var(--lbl);line-height:1.55;
+  .demo{background:#fff5d6;color:#8a6d00;border:1px solid #f0dd88;
+    font-size:13px;font-weight:600;padding:8px 12px;border-radius:10px;margin-bottom:12px;text-align:center}
+  .alert{border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55;
     margin-bottom:12px;font-weight:600}
   .alert.warn{background:#fff8e6;border:1px solid #f0d48a;color:#8a6100}
   .alert.bad{background:#fdecec;border:1px solid #f3b7b7;color:#a02323}
+  .say{background:#f0f6fd;border:1px solid #d6e6f8;border-radius:12px;padding:12px 14px;
+    font-size:14px;line-height:1.5;margin-bottom:14px;color:#143b66}
+  .say b{color:#0b56b0}
 
-  /* 充满 / 放完 预测 */
-  .eta{border-radius:14px;padding:12px 14px;margin-bottom:12px;
-    font-size:var(--lbl);line-height:1.5;font-weight:600;
-    display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
-  .eta .big{font-size:var(--mid);font-weight:800}
+  /* 主卡：电量是绝对主角；预测行并入卡内，用分隔线分区 */
+  .main{background:var(--card);border:1px solid var(--line);border-radius:18px;
+    padding:16px 16px 0;margin-bottom:var(--s3);overflow:hidden}
+  .main .lab{font-size:13px;color:var(--mut)}
+  .main .soc{display:flex;align-items:baseline;gap:6px;margin:2px 0 12px;
+    font-size:clamp(46px,15vw,64px);font-weight:800;line-height:1;
+    letter-spacing:-1px;font-variant-numeric:tabular-nums}
+  .main .soc .u{font-size:clamp(20px,6vw,26px);font-weight:700;color:var(--mut);letter-spacing:0}
+  .main .batbar{width:100%;height:14px;display:block;margin-bottom:14px}
+  .main .row2{display:flex;flex-wrap:wrap;gap:8px 22px;padding:12px 0;
+    border-top:1px solid var(--hair);font-size:14px;font-variant-numeric:tabular-nums}
+  .main .row2 .k{color:var(--mut);margin-right:5px}
+  .main .row2 b{font-size:16px;font-weight:700}
+  .main .row2 .u2{color:var(--mut);margin-left:2px}
+
+  /* 预测行（主卡内通栏） */
+  .eta{margin:0 -16px;padding:12px 16px;border-top:1px solid var(--hair);
+    font-size:14px;font-weight:600}
+  .eta #etaTxt{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+  .eta .big{font-size:16px;font-weight:800}
   .eta b{font-weight:800}
-  .eta.chg{background:#e9f7ef;border:1px solid #b7e4c7;color:#1b6b3a}
-  .eta.dis{background:#fdf0e6;border:1px solid #f5cfa8;color:#8a4b00}
-  .eta.idle{background:#f1f5f9;border:1px solid #dbe3ea;color:#5b6b7c}
-  .eta #etaTxt{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+  .eta.chg{background:#f2faf5;color:#1b6b3a}
+  .eta.dis{background:#fdf6ee;color:#8a4b00}
+  .eta.idle{background:#f8fafc;color:#5b6b7c}
 
-  /* 电流条：长度 = 电流大小（满格 30A）；充电从左往右长、放电从右往左长 */
-  .eta .ani{flex:0 0 auto;display:flex;align-items:center;gap:6px}
-  .eta .cbar{position:relative;width:132px;height:16px;border-radius:8px;
-    background:rgba(0,0,0,.07);overflow:hidden;display:block;flex:0 0 auto}
-  .eta .cbar i{position:absolute;top:0;bottom:0;width:0;border-radius:8px;display:block;
-    background:currentColor;transition:width .7s cubic-bezier(.4,0,.2,1),opacity .4s}
-  .eta.chg .cbar i{left:0}      /* 充电：左对齐，向右长 */
-  .eta.dis .cbar i{right:0}     /* 放电：右对齐，向左长 */
-  .eta.idle .cbar i{opacity:0}  /* 静置：不显示 */
-  .eta .cscl{font-size:11px;font-weight:400;opacity:.7}
-  @media (prefers-reduced-motion: reduce){.eta .cbar i{transition:none}}
+  /* 四个指标：不要卡片壳，只用竖线分隔 */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:var(--s3)}
+  .kpi{padding:0 10px;display:flex;flex-direction:column;gap:2px;border-left:1px solid #dfe6ed}
+  .kpi:first-child{border-left:none;padding-left:0}
+  .kpi .k{font-size:12px;color:var(--mut)}
+  .kpi b{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+  .kpi .s{font-size:12px;color:var(--mut)}
+  .g{color:var(--ok)} .w{color:var(--warn)} .b{color:var(--bad)}
+
+  /* 区块卡片（只保留 2 张：波形、电芯） */
+  .sec{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:14px;margin-bottom:var(--s3)}
+  .sec .h{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;margin-bottom:10px}
+  .sec .h svg{width:18px;height:18px;color:var(--accent)}
+  .legend{font-size:12px;color:var(--mut);margin:0 0 10px;display:flex;gap:12px;flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+  .cells{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .cell{background:#f7f9fb;border-radius:10px;padding:8px 4px;text-align:center}
+  .cell .n{font-size:11px;color:var(--mut)}
+  .cell .vv{font-size:clamp(15px,4.4vw,17px);font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+  /* 均衡线电阻(参考值): 默认灰, 只有异常才转黄/红 */
+  .cell .rr{font-size:11px;color:var(--mut);margin-top:1px;font-variant-numeric:tabular-nums}
+  .cell .rr.w{color:var(--warn)}
+  .cell .rr.b{color:var(--bad)}
+
+  .foot{text-align:center;color:var(--mut);font-size:13px;margin-top:4px}
 
   /* 波形 */
-  .tabs{display:flex;gap:8px;margin:4px 0 10px}
-  .tab{flex:1;border:1px solid var(--line);background:#f6f9fc;color:var(--mut);
-    font-size:var(--lbl);font-weight:700;padding:11px 0;border-radius:12px;cursor:pointer}
+  .tabs{display:flex;gap:8px;margin:0 0 10px}
+  .tab{flex:1;border:1px solid var(--line);background:#f7f9fb;color:var(--mut);
+    font-size:14px;font-weight:700;padding:10px 0;border-radius:10px;cursor:pointer}
   .tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .wbtn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:var(--lbl);font-weight:700;cursor:pointer}
+  .wbtn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer}
   .wbtn.sec{background:#fff;color:var(--accent);border:1px solid var(--accent)}
   .wbtn:active{transform:translateY(1px)}
   #wave{width:100%;height:240px;display:block}
-  .wstat{font-size:var(--mid);font-weight:800;margin:2px 0 8px;color:var(--fg)}
-  .wmsg{font-size:var(--lbl);color:var(--mut);text-align:center;padding:24px 0}
+  .wstat{font-size:15px;font-weight:700;margin:0 0 8px;color:var(--fg);font-variant-numeric:tabular-nums}
+  .wmsg{font-size:14px;color:var(--mut);text-align:center;padding:24px 0}
 
-  @media (max-width:380px){.cells{grid-template-columns:repeat(3,1fr)}}
+  @media (max-width:380px){
+    .cells{grid-template-columns:repeat(3,1fr)}
+    .kpis{grid-template-columns:repeat(2,1fr);gap:12px 0}
+    .kpi:nth-child(3){border-left:none;padding-left:0}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="head">
-    <svg class="bt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/><line x1="6" y1="12" x2="13" y2="12"/></svg>
     <h1>电瓶状态</h1>
     <span id="pill" class="pill"><span class="d"></span><span id="pillt">在线</span></span>
   </div>
@@ -128,53 +120,28 @@
 
   <div class="say" id="say" style="display:none"></div>
 
-  <!-- 两个大卡 -->
-  <div class="hero">
-    <div class="big">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/></svg>剩余电量</div>
-      <div class="num"><span id="socN">--</span><span class="u">%</span></div>
-      <div class="batwrap"><svg id="batSvg" viewBox="0 0 200 46" preserveAspectRatio="none">
-        <rect x="2" y="4" width="184" height="38" rx="6" fill="none" stroke="#cbd5e1" stroke-width="3"/>
-        <rect x="188" y="15" width="8" height="16" rx="2" fill="#cbd5e1"/>
-        <rect id="batFill" x="6" y="8" width="0" height="30" rx="4" fill="var(--ok)"/>
-      </svg></div>
+  <!-- 主卡：电量当绝对主角；电压/容量降为一行；预测行并入卡内用分隔线分区 -->
+  <section class="main">
+    <div class="lab">剩余电量</div>
+    <div class="soc"><span id="socN">--</span><span class="u">%</span></div>
+    <svg class="batbar" viewBox="0 0 280 14" preserveAspectRatio="none" aria-hidden="true">
+      <rect x="0" y="0" width="280" height="14" rx="7" fill="#eef2f6"/>
+      <rect id="batFill" x="0" y="0" width="0" height="14" rx="7" fill="var(--ok)"/>
+    </svg>
+    <div class="row2">
+      <div><span class="k">总电压</span><b id="volN">--</b><span class="u2">V</span></div>
+      <div><span class="k">剩余容量</span><b id="capLine">--</b></div>
     </div>
-    <div class="big">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/></svg>总电压</div>
-      <div class="num"><span id="volN">--</span><span class="u">V</span></div>
-      <div class="sub" style="font-size:14px;color:var(--mut);margin-top:8px" id="capLine">容量 -- / -- Ah</div>
-    </div>
-  </div>
+    <!-- 充满/放完预测：文字元素常驻，只更新 #etaTxt，避免每 3 秒刷新打断 -->
+    <div class="eta idle" id="eta" style="display:none"><span id="etaTxt"></span></div>
+  </section>
 
-  <!-- 充满 / 放完 预测 -->
-  <!-- 动画元素 .ani 常驻不重建，只更新 #etaTxt 的文字 —— 否则每 3 秒刷新会把动画打断 -->
-  <div class="eta idle" id="eta" style="display:none">
-    <span class="ani"><span class="cbar"><i></i></span><span class="cscl">30A</span></span>
-    <span id="etaTxt"></span>
-  </div>
-
-  <!-- 指标网格 -->
-  <div class="grid">
-    <div class="m">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7" id="curArr"/></svg>充放电</div>
-      <div class="v" id="curV">--</div>
-      <div class="sub" id="powV">功率 -- W</div>
-    </div>
-    <div class="m">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2 2 0 0 0-4 0v11.26a4 4 0 1 0 4 0z"/></svg>温度</div>
-      <div class="v" id="tempV">--</div>
-      <div class="sub" id="tempSub">探头状态</div>
-    </div>
-    <div class="m">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>电芯均衡</div>
-      <div class="v" id="balV">--</div>
-      <div class="sub" id="balSub">压差</div>
-    </div>
-    <div class="m">
-      <div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1.3" fill="currentColor" stroke="none"/></svg>无线信号</div>
-      <div class="v" id="rssiV">--</div>
-      <div class="sub">监测板联网</div>
-    </div>
+  <!-- 四个指标：去掉卡片壳，只用竖线分隔 -->
+  <div class="kpis">
+    <div class="kpi"><span class="k">充放电</span><b id="curV">--</b><span class="s" id="powV">--</span></div>
+    <div class="kpi"><span class="k">温度</span><b id="tempV">--</b><span class="s" id="tempSub">--</span></div>
+    <div class="kpi"><span class="k">压差</span><b id="balV">--</b><span class="s" id="balSub">--</span></div>
+    <div class="kpi"><span class="k">信号</span><b id="rssiV">--</b><span class="s">监测板</span></div>
   </div>
 
   <!-- BMS 设置（破解读取，只读展示） -->
@@ -300,27 +267,28 @@ async function load(){
   if(soc!=null){ $('socN').textContent = soc; }
   else { $('socN').textContent = '—'; }
   const fillW = (soc!=null? soc : 0);
-  $('batFill').setAttribute('width', (176*fillW/100).toFixed(1));
+  $('batFill').setAttribute('width', (280*fillW/100).toFixed(1));   // 新电池条 viewBox 宽 280
   $('batFill').setAttribute('fill', soc!=null?(soc<20?'var(--bad)':soc<50?'var(--warn)':'var(--ok)'):'var(--mut)');
 
-  // 总电压 + 容量
+  // 总电压 + 容量（标签已在 HTML 里，这里只填数值）
   $('volN').textContent = (p.voltage!=null)? p.voltage.toFixed(2) : '--';
-  if(p.remaining_ah!=null){ $('capLine').textContent = '容量 '+p.remaining_ah.toFixed(1)+' / '+(p.total_ah!=null?p.total_ah.toFixed(1):'--')+' Ah'; }
-  else { $('capLine').textContent = '容量 -- / -- Ah'; }
+  $('capLine').textContent = (p.remaining_ah!=null)
+    ? (p.remaining_ah.toFixed(1) + ' / ' + (p.total_ah!=null ? p.total_ah.toFixed(1) : '--') + ' Ah')
+    : '-- / -- Ah';
 
-  // 充放电
+  // 充放电（4 列窄格：值只放数字，颜色表方向；瓦数放副行）
+  // 注意: 旧的 #curArr 图标已随卡片一起删除，不能再引用，否则 $() 返回 null 会抛异常。
   const cur = p.current;
   if(cur!=null && Math.abs(cur)>0.01){
     const charging = cur>0;
-    $('curV').textContent = (charging?'充电 ':'放电 ')+Math.abs(cur).toFixed(1)+' A';
-    $('curV').className = 'v ' + (charging?'g':'w');
-    $('curArr').setAttribute('d', charging ? 'M5 12l7-7 7 7' : 'M19 12l-7 7-7-7');
+    $('curV').textContent = Math.abs(cur).toFixed(1)+' A';
+    $('curV').className = charging?'g':'w';
   } else if(cur!=null){
-    $('curV').textContent = '静置'; $('curV').className='v';
-    $('curArr').setAttribute('d','M12 12h0.1');
-  } else { $('curV').textContent='--'; $('curV').className='v'; }
-  if(p.power!=null){ $('powV').textContent = '功率 '+Math.abs(p.power).toFixed(0)+' W'; }
-  else { $('powV').textContent='功率 -- W'; }
+    $('curV').textContent = '0 A'; $('curV').className='';
+  } else {
+    $('curV').textContent = '--'; $('curV').className='';
+  }
+  $('powV').textContent = (p.power!=null) ? Math.abs(p.power).toFixed(0)+' W' : '--';
 
   // ===== 充满 / 放完 预测（含充放电动画）=====
   // 后端 /api/summary 的 rate 块给出: mode(charging/discharging/idle)、avg_a(近5分钟电流均值)、eta_h、eta_at
@@ -335,13 +303,6 @@ async function load(){
                 && rt.eta_h != null && isFinite(rt.eta_h) && rt.eta_h > 0;
   const wantCls = 'eta ' + (etaOk ? (rt.mode === 'charging' ? 'chg' : 'dis') : 'idle');
   if(etaEl.className !== wantCls) etaEl.className = wantCls;   // 仅在变化时改，避免动画被重置
-  // 电流条长度 = |平均电流| / 满格 30A
-  const cbar = etaEl.querySelector('.cbar i');
-  if(cbar){
-    const amp = Math.abs(Number(rt.avg_a) || 0);
-    const pct = etaOk ? Math.max(3, Math.min(100, amp / 30 * 100)) : 0;
-    cbar.style.width = pct.toFixed(1) + '%';
-  }
   if(etaOk){
     const when = new Date(Date.now() + rt.eta_h * 3600000);
     const hhmm = ('0'+when.getHours()).slice(-2) + ':' + ('0'+when.getMinutes()).slice(-2);
@@ -364,10 +325,10 @@ async function load(){
     txt = shown.toFixed(1)+' ℃';
     sub = (t2!=null&&t2>-100 && t1!=null&&t1<=-100)?'两路正常':(t1!=null&&t1<=-100?'1路断线':'正常');
     const cls = shown>55?'b':shown>45?'w':'g';
-    $('tempV').className='v '+cls;
+    $('tempV').className = cls;
   } else {
     txt = (t1!=null&&t1<=-100&&t2!=null&&t2<=-100)?'均断线':'--';
-    sub = '探头未连接'; $('tempV').className='v';
+    sub = '探头未连接'; $('tempV').className = '';
   }
   $('tempV').textContent=txt; $('tempSub').textContent=sub;
 
@@ -382,11 +343,10 @@ async function load(){
   if(dmv!=null){ $('balV').textContent = Math.round(dmv)+' mV'; }
   else { $('balV').textContent='--'; }
   if(dmv!=null){
-    $('balV').className='v '+(dmv<30?'g':dmv<80?'w':'b');
-    let sub = dmv<30?'压差小·均衡好':(dmv<80?'压差偏大·需关注':'压差严重·必须处理');
-    if(hiI) sub += '（第'+hiI+'节最高）';
-    $('balSub').textContent = sub;
-  } else { $('balV').className='v'; $('balSub').textContent='压差'; }
+    $('balV').className = (dmv<30?'g':dmv<80?'w':'b');
+    // 副行保持短：窄格里放不下长句，详细结论在上面的告警条里
+    $('balSub').textContent = dmv<30?'均衡好':(dmv<80?'偏大':'严重');
+  } else { $('balV').className=''; $('balSub').textContent='--'; }
 
   // 顶部压差告警条：>=30mV 才出现，>=80mV 升级为红色严重
   const al=$('alert');
@@ -430,8 +390,7 @@ async function load(){
     const rtxt = (rv!=null && isFinite(rv)) ? rv.toFixed(2)+' Ω' : '—';
     const el = document.createElement('div'); el.className='cell';
     el.innerHTML = '<div class="n">第'+(i+1)+'节</div><div class="vv" style="color:'+col+'">'+Number(v).toFixed(3)+'</div>'+
-      '<div class="rr '+rcls+'" style="color:'+rcol+'">'+rtxt+'</div>'+
-      '<div class="bar"><i style="width:'+Math.min(100,v/4.25*100).toFixed(1)+'%;background:'+col+'"></i></div>';
+      '<div class="rr '+rcls+'" style="color:'+rcol+'">'+rtxt+'</div>';
     wrap.appendChild(el);
   });
 
