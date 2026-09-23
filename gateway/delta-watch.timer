@@ -1,0 +1,11 @@
+[Unit]
+Description=每 10 分钟记录一次 JK-BMS 电芯压差
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=600
+AccuracySec=10s
+Unit=jk-bms-delta-watch.service
+
+[Install]
+WantedBy=timers.target

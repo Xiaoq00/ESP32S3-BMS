@@ -1,0 +1,8 @@
+[Unit]
+Description=JK-BMS 电芯压差快照（每 10 分钟追加一行到 delta_watch.csv）
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/delta_watch.py
