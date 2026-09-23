@@ -60,6 +60,10 @@
   .cell .vv{font-size:clamp(16px,4.6vw,19px);font-weight:800;margin-top:3px}
   .cell .bar{height:7px;border-radius:4px;background:var(--line);margin-top:7px;overflow:hidden}
   .cell .bar i{display:block;height:100%;border-radius:4px}
+  /* 均衡线电阻(参考值): 默认灰, 只有异常才转黄/红 —— 避免与电压那行抢注意力 */
+  .cell .rr{font-size:11px;font-weight:700;color:var(--mut);margin-top:2px;font-variant-numeric:tabular-nums}
+  .cell .rr.w{color:var(--warn)}
+  .cell .rr.b{color:var(--bad)}
 
   .foot{text-align:center;color:var(--mut);font-size:14px;margin-top:6px}
   .say{background:#eaf3ff;border:1px solid #cfe2ff;border-radius:14px;padding:13px 14px;
@@ -170,6 +174,7 @@
       <span><i style="background:var(--ok)"></i>均衡好</span>
       <span><i style="background:var(--warn)"></i>略有偏差</span>
       <span><i style="background:var(--bad)"></i>偏差大</span>
+      <span style="color:var(--mut)">小字 = 均衡线电阻（参考值）</span>
     </div>
     <div class="cells" id="cells"></div>
   </div>
@@ -184,6 +189,10 @@ const DEMO = {
   pack:{voltage:66.71, current:-23.4, power:-1558, soc:99, remaining_ah:117.8, total_ah:119.0, temp1:-200, temp2:35.2},
   cells:[3.334,3.334,3.339,3.334,3.332,3.332,3.341,3.351,3.341,3.341,3.341,3.332,3.334,3.332,3.334,3.332,3.332,3.332,3.332,3.334],
   cell_stats:{min_v:3.332,max_v:3.351,delta_mv:19,mean_v:3.335},
+  cell_res:[0.372,0.368,0.381,0.365,0.359,0.360,0.412,0.388,0.371,0.369,0.366,0.358,0.363,0.361,0.367,0.364,0.370,0.362,0.359,0.374],
+  cell_res_raw:[372,368,381,365,359,360,412,388,371,369,366,358,363,361,367,364,370,362,359,374],
+  cell_res_alert:0,
+  res_stats:{min_ohm:0.358,max_ohm:0.412,mean_ohm:0.370,median_ohm:0.366,max_cell:7,min_cell:12,scale:0.001},
   rssi:-61,
   summary_text:"电池在线，最后更新于刚刚。总电压 66.71V，放电 23.4A，SOC 99%，剩余 117.8Ah。20芯电压 3.332~3.351V，压差 19mV，均衡良好。温度1 断线，温度2 35.2℃。"
 };
@@ -191,6 +200,20 @@ const DEMO = {
 
 const $ = id => document.getElementById(id);
 function colorForDev(mv){ return mv>30?'var(--bad)':mv>10?'var(--warn)':'var(--ok)'; }
+
+// 均衡线电阻配色: 默认灰(参考值); 阈值用"相对中位数", 不依赖尚未校准的绝对量纲
+function median(a){ if(!a||!a.length) return null; const s=[...a].sort((x,y)=>x-y);
+  const m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+function colorForRes(ohm, med){
+  if(ohm==null || !isFinite(ohm) || !med || med<=0) return 'var(--mut)';
+  if(ohm >= med*3) return 'var(--bad)';
+  if(ohm >= med*2) return 'var(--warn)';
+  return 'var(--mut)';
+}
+function resClass(ohm, med){
+  const c = colorForRes(ohm, med);
+  return c==='var(--bad)' ? 'b' : (c==='var(--warn)' ? 'w' : '');
+}
 
 let curRange = 'day';
 let waveData = null;
@@ -223,6 +246,10 @@ async function load(){
     if(j.rssi==null) j.rssi = data.rssi;
     if(j.age_seconds==null) j.age_seconds = 0;
     if(!j.updated_at) j.updated_at = null;
+    // 线阻双源兜底: /api/summary 缺失时用 /api/data 的内存态补(沿用既有设计哲学)
+    if((!j.cell_res || !j.cell_res.length) && data.cell_res) j.cell_res = data.cell_res;
+    if((!j.cell_res_raw || !j.cell_res_raw.length) && data.cell_res_raw) j.cell_res_raw = data.cell_res_raw;
+    if(j.cell_res_alert==null) j.cell_res_alert = data.cell_res_alert;
   }
 
   // 判断是否真拿到数据；完全没有则回退演示（带黄条），绝不留全横杠
@@ -317,12 +344,29 @@ async function load(){
   // 电芯
   const cells = j.cells||[];
   const cmax = (j.cell_stats&&j.cell_stats.max_v!=null)? j.cell_stats.max_v : (cells.length?Math.max(...cells):null);
+  // 均衡线电阻: 优先用网关换算好的 cell_res; 长度不符时用 raw×scale 兜底; 都不可用则显示 —
+  // (绝不用 0 兜底: 0 会被渲染成 "0.00 Ω", 误读为短路)
+  const resArr = (j.cell_res && j.cell_res.length===cells.length) ? j.cell_res : [];
+  const rawArr = (j.cell_res_raw && j.cell_res_raw.length===cells.length) ? j.cell_res_raw : [];
+  const resScale = (j.res_stats && j.res_stats.scale) || 0.001;
+  const resOk = resArr.length===cells.length || rawArr.length===cells.length;
+  const resVal = i => (resArr.length===cells.length) ? Number(resArr[i])
+                      : (rawArr.length===cells.length ? Number(rawArr[i])*resScale : null);
+  const resMed = (j.res_stats && j.res_stats.median_ohm)
+                 || (resOk ? median(cells.map((_,i)=>resVal(i)).filter(v=>v!=null&&isFinite(v))) : null);
+  const alertMask = (j.cell_res_alert|0);
   const wrap = $('cells'); wrap.innerHTML='';
   cells.forEach((v,i)=>{
     const dev = cmax!=null ? Math.round((cmax-v)*1000) : 0;
     const col = colorForDev(dev);
+    const rv = resOk ? resVal(i) : null;
+    const alerted = ((alertMask>>>i)&1)===1;   // BMS 原生报警优先(厂商判断, 不依赖我们的换算)
+    const rcol = alerted ? 'var(--bad)' : colorForRes(rv, resMed);
+    const rcls = alerted ? 'b' : resClass(rv, resMed);
+    const rtxt = (rv!=null && isFinite(rv)) ? rv.toFixed(2)+' Ω' : '—';
     const el = document.createElement('div'); el.className='cell';
     el.innerHTML = '<div class="n">第'+(i+1)+'节</div><div class="vv" style="color:'+col+'">'+Number(v).toFixed(3)+'</div>'+
+      '<div class="rr '+rcls+'" style="color:'+rcol+'">'+rtxt+'</div>'+
       '<div class="bar"><i style="width:'+Math.min(100,v/4.25*100).toFixed(1)+'%;background:'+col+'"></i></div>';
     wrap.appendChild(el);
   });

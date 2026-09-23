@@ -14,7 +14,18 @@ DATA_DIR = "/opt/jk-bms"   # recorder 落盘目录(latest.json / history.jsonl /
 HISTORY  = os.path.join(DATA_DIR, "history.jsonl")
 AGG      = os.path.join(DATA_DIR, "agg.json")
 
-state = {"cells": [], "total": 0.0, "min": 0.0, "max": 0.0, "bal": 0.0, "rssi": 0, "online": False}
+# ===== 均衡线电阻(固件只发原始 uint16, 这里决定 Ω 值) =====
+# 校准(系数/单位修正)只改这一处, 不用重刷固件。
+RES_OHM_SCALE = 0.001
+# 遥测 JSON 行变长(约 431B → 590B)后, "读文件末尾 N 字节"的窗口会缩短:
+#   trend 窗口若仍是 64KB 只够 ~9.4 分钟 < 代码里写死的 10 分钟回看 → voltage_10min_ago
+#   会静默消失, 故提到 160KB(~37 分钟)。
+HIST_TREND_BYTES = 160 * 1024
+# /api/history?range=day 的窗口: 12MB 从 ~39h 降到 ~28.5h(够一天但余量少), 提到 16MB(~40h)。
+HIST_DAY_BYTES   = 16 * 1024 * 1024
+
+state = {"cells": [], "total": 0.0, "min": 0.0, "max": 0.0, "bal": 0.0, "rssi": 0,
+         "cell_res_raw": [], "cell_res_alert": 0, "online": False}
 lock = threading.Lock()
 
 # BMS 设置(来自 jk-bms/settings，破解读取 0x01 帧；关键阈值建议以官方 JK App 为准)
@@ -35,7 +46,9 @@ def on_message(cli, userdata, msg):
                 settings.clear(); settings.update(d)
             return
         with lock:
-            for k in ("cells", "total", "min", "max", "bal", "rssi"):
+            # 白名单: 新字段不加进来就会"静默透不出"(不报错, 最难查)
+            for k in ("cells", "total", "min", "max", "bal", "rssi",
+                      "cell_res_raw", "cell_res_alert"):
                 if k in d: state[k] = d[k]
             state["online"] = bool(d.get("online", True))
     except Exception as e:
@@ -185,6 +198,7 @@ def summary():
     hist_path   = os.path.join(DATA_DIR, "history.jsonl")
     out = {"online": False, "updated_at": None, "age_seconds": None,
            "pack": {}, "cells": [], "cell_stats": {}, "rssi": 0,
+           "cell_res": [], "cell_res_raw": [], "cell_res_alert": 0, "res_stats": {},
            "trend": {}, "summary_text": "暂无电池数据"}
     if not os.path.exists(latest_path):
         return json.dumps(out, ensure_ascii=False)
@@ -215,13 +229,40 @@ def summary():
                              "delta_mv": round((cmax-cmin)*1000,1),
                              "mean_v": round(sum(cells)/len(cells),4)}
 
-    # 趋势：只读 history.jsonl 末尾 ~64KB，避免整文件载入
+    # ===== 均衡线电阻: 原始整数 → Ω(换算系数在网关侧, 见 RES_OHM_SCALE) =====
+    # 注意: 这是"均衡线电阻"(采样/均衡线 + 端子接触电阻), 不是电芯内阻。
+    # 未与 JK App 逐节对表前绝对量纲存疑 → 前端只用相对判据(见 dashboard.html)。
+    raw_res = d.get("cell_res_raw") or []
+    out["cell_res_raw"] = raw_res
+    out["cell_res_alert"] = int(d.get("cell_res_alert") or 0)
+    ohm = [round(v * RES_OHM_SCALE, 4) for v in raw_res if isinstance(v, (int, float))]
+    out["cell_res"] = ohm
+    if len(ohm) >= 2:
+        srt = sorted(ohm)
+        out["res_stats"] = {
+            "min_ohm": round(min(ohm), 4), "max_ohm": round(max(ohm), 4),
+            "mean_ohm": round(sum(ohm)/len(ohm), 4),
+            "median_ohm": round(srt[len(srt)//2], 4),
+            "max_cell": ohm.index(max(ohm)) + 1, "min_cell": ohm.index(min(ohm)) + 1,
+            "scale": RES_OHM_SCALE,
+        }
+
+    # 趋势：只读 history.jsonl 末尾若干字节(窗口见 HIST_TREND_BYTES)，避免整文件载入
     trend = {}
     try:
         with open(hist_path, "rb") as f:
-            f.seek(0, 2); size = f.tell(); f.seek(max(0, size-65536))
+            f.seek(0, 2); size = f.tell(); f.seek(max(0, size-HIST_TREND_BYTES))
             tail = f.read().decode(errors="ignore")
-        samples = [json.loads(x) for x in tail.splitlines() if x.strip()]
+        # 逐行解析并跳过坏行: seek 到字节偏移会切在行中间, 第一行必然是半截 JSON。
+        # 原来写成列表推导式, 一行坏就整段抛异常被 except 吞掉 → trend 永远是空(既有 bug)。
+        samples = []
+        for x in tail.splitlines():
+            if not x.strip():
+                continue
+            try:
+                samples.append(json.loads(x))
+            except Exception:
+                continue
         if samples:
             trend["samples_recent"] = len(samples)
             t0 = samples[0].get("ts")
@@ -290,7 +331,7 @@ def history():
         try:
             with open(HISTORY, "rb") as f:
                 f.seek(0, 2); size = f.tell()
-                f.seek(max(0, size - 12 * 1024 * 1024))   # 读末尾最多 12MB（覆盖今日全部@5s）
+                f.seek(max(0, size - HIST_DAY_BYTES))   # 读末尾最多 16MB（覆盖今日全部@5s；行变长后仍够一整天）
                 tail = f.read().decode(errors="ignore")
             for line in tail.splitlines():
                 if not line.strip():

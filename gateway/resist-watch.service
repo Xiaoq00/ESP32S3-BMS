@@ -1,0 +1,8 @@
+[Unit]
+Description=JK-BMS 均衡线电阻观测哨（20 节线阻，每分钟落盘一行）
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/resist_watch.py

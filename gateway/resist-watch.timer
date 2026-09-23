@@ -1,0 +1,11 @@
+[Unit]
+Description=每分钟记录一次 JK-BMS 各节均衡线电阻
+
+[Timer]
+OnBootSec=75
+OnUnitActiveSec=60
+AccuracySec=5s
+Unit=jk-bms-resist-watch.service
+
+[Install]
+WantedBy=timers.target
