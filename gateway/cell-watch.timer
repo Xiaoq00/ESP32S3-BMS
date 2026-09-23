@@ -1,0 +1,11 @@
+[Unit]
+Description=每分钟记录一次 JK-BMS 重点电芯（第1/7/8节）与压差
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=60
+AccuracySec=5s
+Unit=jk-bms-cell-watch.service
+
+[Install]
+WantedBy=timers.target

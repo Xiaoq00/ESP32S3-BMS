@@ -1,0 +1,8 @@
+[Unit]
+Description=JK-BMS 重点电芯观测哨（第1/7/8节 + 压差，每分钟落盘一行）
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/cell_watch.py
