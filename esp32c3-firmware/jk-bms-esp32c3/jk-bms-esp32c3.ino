@@ -22,6 +22,7 @@
 #include <host/ble_gatt.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <stdarg.h>
 
 // ===== 部署前请修改以下“配置区”常量（不要提交真实密码到公开仓库）=====
 #define BMS_MAC       "AA:BB:CC:DD:EE:FF"   // 你的 BMS 蓝牙 MAC（在 JK App 设备信息里看）
@@ -39,6 +40,13 @@
 #define MQTT_TOPIC_SETTINGS "jk-bms/settings-raw"
 #define MQTT_TOPIC_SET "jk-bms/set"   // 写指令通道(后端 /api/set 转发到此)
 #define PUBLISH_MS     5000
+
+// ---- 调试开关: 把最新 0x02 原始帧 hex 发到独立主题(默认关) ----
+// 用途: 核对"均衡线阻区"偏移(80+2n)是否判断正确。核对完请置回 0 重新编译。
+// ⚠️ 绝不能发到 jk-bms/state —— recorder 会原样落盘, 每行多 ~600 字节
+//    会把 history.jsonl 的读取窗口(按字节)击穿, 拖垮 /api/history。
+#define PUB_RAW_FRAME  0
+#define MQTT_TOPIC_RAW "jk-bms/telemetry-raw"
 
 // 设备密码(JK App 设置密码): 6 位, 作为 uint32 发送(命令 0x05)解锁写权限
 // 本板 V20.27 写设置前必须先发密码, 否则 BMS 静默忽略写入(实测: 不发密码写 0x0E 读回不变)。
@@ -76,6 +84,19 @@ static uint8_t g_soc=0;
 static bool    g_hasData=false;
 static unsigned long g_lastPublish=0;
 
+// ===== 均衡线电阻(0x02 帧 @80+2n, uint16 LE, 原值 ×0.001 = Ohm) =====
+// 本板走 JK02_32S 布局(实测 @74=平均电压、@76=压差 与 cells 吻合, 反推线阻基址 = 64+16 = 80)。
+// 固件只发原始整数, 单位换算/校准交给网关侧配置 —— 以后改系数不用重刷固件。
+static uint16_t g_resRaw[20] = {0};   // 每节线阻原始值
+static uint32_t g_resAlert  = 0;      // 线阻报警位掩码(@146, u32; bit n = 第 n+1 节)
+static bool     g_hasRes    = false;  // 本帧是否读到线阻区(帧长不足时为 false)
+static bool     g_resChk    = false;  // 布局自检: @74/@76 是否与 cells 实算吻合
+
+#if PUB_RAW_FRAME
+static uint8_t g_telFrame[340];
+static int     g_telLen = 0;
+#endif
+
 // 最新设置帧(0x01)原样保存, 供 PC 端标定偏移
 static uint8_t g_settingsFrame[340];
 static int     g_settingsLen=0;
@@ -97,6 +118,18 @@ static bool    g_wPending = false;
 static uint8_t jkCrc(const uint8_t* d, size_t len){ uint8_t c=0; for(size_t i=0;i<len;i++) c+=d[i]; return c; }
 static uint32_t rdU32(const uint8_t* f, int o){ return (uint32_t)f[o]|((uint32_t)f[o+1]<<8)|((uint32_t)f[o+2]<<16)|((uint32_t)f[o+3]<<24); }
 static uint16_t rdU16(const uint8_t* f, int o){ return (uint16_t)f[o]|((uint16_t)f[o+1]<<8); }
+
+// 安全追加: 夹住 n, 杜绝 sizeof(buf)-n 在 size_t 下溢(原 snprintf 链的潜在越界隐患)
+static int app(char* b, int cap, int n, const char* fmt, ...) {
+  if (n < 0) n = 0;
+  if (n >= cap) return cap - 1;                 // 已满: 只返回, 不再写
+  va_list ap; va_start(ap, fmt);
+  int w = vsnprintf(b + n, (size_t)(cap - n), fmt, ap);
+  va_end(ap);
+  if (w < 0) return n;
+  n += w;
+  return (n >= cap) ? cap - 1 : n;
+}
 #if VERBOSE
 static void hexDump(const uint8_t* b, size_t n){ for(size_t i=0;i<n;i+=16){ Serial.printf("%03u: ",i); for(size_t j=0;j<16;j++){ if(i+j<n) Serial.printf("%02X ",b[i+j]); else Serial.printf("   ");} Serial.println(); } }
 #endif
@@ -139,6 +172,27 @@ static void handleFrame(const uint8_t* f, int size) {
     g_temp1 = temp1*0.1f; g_temp2 = temp2*0.1f;
     for (int c=0;c<20;c++) g_cells[c] = rdU16(f, 6+c*2)*0.001f;
     g_hasData = true;
+
+    // ===== 均衡线电阻(@80+2n) + 报警掩码(@146) =====
+    // 帧长门槛取 150(因为还要读 @146 的 u32: 146+4=150)。processBuffer 只会给
+    // {300,320,340} 三种候选帧长, 所以此判断当前恒真; 保留它是为了将来候选帧长
+    // 变化、或 handleFrame 被别处调用时, 不会越界读 1KB 的 frameBuf。
+    if (size >= 150) {
+      for (int c=0;c<20;c++) g_resRaw[c] = rdU16(f, 80 + c*2);
+      g_resAlert = rdU32(f, 146);
+      g_hasRes   = true;
+      // 布局自检: 若本板真是 JK02_32S, @74 应≈平均电压(mV)、@76 应≈压差(mV)。
+      // 长期为 false 说明偏移判断有误 —— 看板会显示 cell_res_chk:false, 便于立刻发现。
+      float sum=0, cmn=1e9f, cmx=-1e9f;
+      for (int c=0;c<20;c++){ sum+=g_cells[c]; if(g_cells[c]<cmn)cmn=g_cells[c]; if(g_cells[c]>cmx)cmx=g_cells[c]; }
+      g_resChk = (fabsf((float)rdU16(f,74) - (sum/20.0f)*1000.0f) < 8.0f)
+              && (fabsf((float)rdU16(f,76) - (cmx-cmn)*1000.0f) < 8.0f);
+    } else {
+      g_hasRes = false; g_resChk = false;
+    }
+#if PUB_RAW_FRAME
+    if (size > 0 && size <= (int)sizeof(g_telFrame)) { memcpy(g_telFrame, f, size); g_telLen = size; }
+#endif
     // 干净的一行遥测
     Serial.printf("TELEMETRY V=%.3f I=%.3f P=%.3f SOC=%u%% RemAh=%.3f TotAh=%.3f T1=%.1f T2=%.1f | cells:",
                   g_voltage, g_current, g_power, soc, g_remAh, g_totAh, g_temp1, g_temp2);
@@ -170,15 +224,24 @@ static void publishTelemetry() {
   if (!g_hasData) return;
   float cmin=1e9, cmax=-1e9;
   for (int c=0;c<20;c++){ if (g_cells[c]<cmin) cmin=g_cells[c]; if (g_cells[c]>cmax) cmax=g_cells[c]; }
-  char buf[1024];
-  int n = snprintf(buf, sizeof(buf),
+  char buf[1536];   // 加线阻后实测 ~493B(最坏 ~542B), 1024 也够; 提到 1536 纯留余量
+  int n = 0;
+  n = app(buf, sizeof(buf), n,
     "{\"online\":true,\"voltage\":%.3f,\"current\":%.3f,\"power\":%.3f,\"soc\":%u,"
     "\"remaining_ah\":%.3f,\"total_ah\":%.3f,\"temp1\":%.1f,\"temp2\":%.1f,\"cells\":[",
     g_voltage, g_current, g_power, g_soc, g_remAh, g_totAh, g_temp1, g_temp2);
-  for (int c=0;c<20;c++){ n += snprintf(buf+n, sizeof(buf)-n, c<19?"%.3f,":"%.3f", g_cells[c]); }
-  n += snprintf(buf+n, sizeof(buf)-n,
-    "],\"cell_min\":%.3f,\"cell_max\":%.3f,\"bal\":%.3f,\"rssi\":%d,\"total\":%.3f,\"min\":%.3f,\"max\":%.3f}",
+  for (int c=0;c<20;c++) n = app(buf, sizeof(buf), n, c<19?"%.3f,":"%.3f", g_cells[c]);
+  // ↓ 原有字段: 名字/顺序/格式一字未动。total/min/max 是别名,
+  //   delta_watch.py 与 delta_report.py 靠 recorder 的别名转换取"总压", 必须保留。
+  n = app(buf, sizeof(buf), n,
+    "],\"cell_min\":%.3f,\"cell_max\":%.3f,\"bal\":%.3f,\"rssi\":%d,\"total\":%.3f,\"min\":%.3f,\"max\":%.3f",
     cmin, cmax, cmax-cmin, WiFi.RSSI(), g_voltage, cmin, cmax);
+  // ↓ 新增字段一律追加在末尾(只增不改)。无数据时发空数组 —— 避免 0 被渲染成 "0.00 Ω"。
+  n = app(buf, sizeof(buf), n, ",\"cell_res_raw\":[");
+  if (g_hasRes)
+    for (int c=0;c<20;c++) n = app(buf, sizeof(buf), n, c<19?"%u,":"%u", (unsigned)g_resRaw[c]);
+  n = app(buf, sizeof(buf), n, "],\"cell_res_alert\":%lu,\"cell_res_chk\":%s}",
+          (unsigned long)(g_hasRes ? g_resAlert : 0), g_resChk ? "true" : "false");
   if (mqtt.publish(MQTT_TOPIC, buf, true)) {
     Serial.printf(">>> [MQTT] 发布 OK (%d B)\n", n);
   } else {
@@ -195,6 +258,19 @@ static void publishSettingsRaw() {
   if (mqtt.publish(MQTT_TOPIC_SETTINGS, buf, true)) Serial.printf(">>> [MQTT] 设置原始帧发布 OK (%d B)\n", n);
   else Serial.println(">>> [MQTT] 设置原始帧发布失败");
 }
+
+#if PUB_RAW_FRAME
+// 调试用: 把最新 0x02 原始帧 hex 发到独立主题(默认关)。用于核对线阻区偏移。
+static void publishTelemetryRaw() {
+  if (g_telLen <= 0) return;
+  char buf[900];
+  int n = snprintf(buf, sizeof(buf), "{\"len\":%d,\"hex\":\"", g_telLen);
+  for (int i=0;i<g_telLen;i++) n += snprintf(buf+n, sizeof(buf)-n, "%02X", g_telFrame[i]);
+  n += snprintf(buf+n, sizeof(buf)-n, "\"}");
+  if (mqtt.publish(MQTT_TOPIC_RAW, buf, true)) Serial.printf(">>> [MQTT] 原始遥测帧发布 OK (%d B)\n", n);
+  else Serial.println(">>> [MQTT] 原始遥测帧发布失败");
+}
+#endif
 
 static void publishSettings() {
   if (!g_hasSettings || g_settingsLen < 140) return;
@@ -382,6 +458,9 @@ void loop() {
       if (g_hasData && (millis()-g_lastPublish > PUBLISH_MS)) {
         g_lastPublish = millis();
         publishTelemetry();
+#if PUB_RAW_FRAME
+        publishTelemetryRaw();
+#endif
       }
       if (g_hasSettings && (millis()-g_lastSettingsPub > PUBLISH_MS)) {
         g_lastSettingsPub = millis();
