@@ -85,6 +85,25 @@
   .eta.chg{background:#e9f7ef;border:1px solid #b7e4c7;color:#1b6b3a}
   .eta.dis{background:#fdf0e6;border:1px solid #f5cfa8;color:#8a4b00}
   .eta.idle{background:#f1f5f9;border:1px solid #dbe3ea;color:#5b6b7c}
+  .eta #etaTxt{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+
+  /* 充/放电动画：电池图标，填充格来回长/退 */
+  .eta .ani{flex:0 0 auto;display:flex;align-items:center}
+  .eta .batt{position:relative;width:56px;height:26px;box-sizing:border-box;
+    border:2px solid currentColor;border-radius:6px;opacity:.9}
+  .eta .batt::after{content:'';position:absolute;right:-6px;top:8px;width:4px;height:10px;
+    background:currentColor;border-radius:0 2px 2px 0}
+  .eta .batt i{position:absolute;left:3px;top:3px;bottom:3px;width:8%;border-radius:3px;
+    background:currentColor;display:block}
+  /* 充电：填充格从左往右长满，循环 */
+  .eta.chg .batt i{animation:jkFill 2.2s ease-in-out infinite}
+  @keyframes jkFill{0%{width:6%}60%{width:94%}75%{width:94%;opacity:.35}100%{width:94%;opacity:1}}
+  /* 放电：填充格从右往左退空，循环 */
+  .eta.dis .batt i{animation:jkDrain 2.2s ease-in-out infinite}
+  @keyframes jkDrain{0%{width:94%}60%{width:6%}75%{width:6%;opacity:.35}100%{width:6%;opacity:1}}
+  /* 静置：静态半格，不闪 */
+  .eta.idle .batt i{width:50%;opacity:.5}
+  @media (prefers-reduced-motion: reduce){.eta .batt i{animation:none !important}}
 
   /* 波形 */
   .tabs{display:flex;gap:8px;margin:4px 0 10px}
@@ -134,7 +153,11 @@
   </div>
 
   <!-- 充满 / 放完 预测 -->
-  <div class="eta" id="eta" style="display:none"></div>
+  <!-- 动画元素 .ani 常驻不重建，只更新 #etaTxt 的文字 —— 否则每 3 秒刷新会把动画打断 -->
+  <div class="eta idle" id="eta" style="display:none">
+    <span class="ani"><span class="batt"><i></i></span></span>
+    <span id="etaTxt"></span>
+  </div>
 
   <!-- 指标网格 -->
   <div class="grid">
@@ -305,27 +328,29 @@ async function load(){
   if(p.power!=null){ $('powV').textContent = '功率 '+Math.abs(p.power).toFixed(0)+' W'; }
   else { $('powV').textContent='功率 -- W'; }
 
-  // ===== 充满 / 放完 预测 =====
+  // ===== 充满 / 放完 预测（含充放电动画）=====
   // 后端 /api/summary 的 rate 块给出: mode(charging/discharging/idle)、avg_a(近5分钟电流均值)、eta_h、eta_at
-  const etaEl = $('eta');
+  // 关键: .ani 动画元素常驻不重建，只改 class 与 #etaTxt 文字 —— 否则每 3 秒重建 DOM 会把动画打断。
+  const etaEl = $('eta'), etaTxt = $('etaTxt');
   const rt = j.rate || {};
   const fmtDur = h => {
     const H = Math.floor(h), M = Math.round((h - H) * 60);
     return H > 0 ? (H + ' 小时 ' + (M < 10 ? '0' : '') + M + ' 分') : (M + ' 分钟');
   };
-  if((rt.mode === 'charging' || rt.mode === 'discharging')
-     && rt.eta_h != null && isFinite(rt.eta_h) && rt.eta_h > 0){
+  const etaOk = (rt.mode === 'charging' || rt.mode === 'discharging')
+                && rt.eta_h != null && isFinite(rt.eta_h) && rt.eta_h > 0;
+  const wantCls = 'eta ' + (etaOk ? (rt.mode === 'charging' ? 'chg' : 'dis') : 'idle');
+  if(etaEl.className !== wantCls) etaEl.className = wantCls;   // 仅在变化时改，避免动画被重置
+  if(etaOk){
     const when = new Date(Date.now() + rt.eta_h * 3600000);
     const hhmm = ('0'+when.getHours()).slice(-2) + ':' + ('0'+when.getMinutes()).slice(-2);
     const chg = (rt.mode === 'charging');
-    etaEl.className = 'eta ' + (chg ? 'chg' : 'dis');
-    etaEl.innerHTML = '<span class="big">' + (chg ? '充电中 ' : '放电中 ') +
+    etaTxt.innerHTML = '<span class="big">' + (chg ? '充电中 ' : '放电中 ') +
       Number(rt.avg_a).toFixed(1) + ' A</span>' +
       '<span>预计 <b>' + hhmm + '</b> ' + (chg ? '充满' : '放完') + '</span>' +
       '<span>（' + (chg ? '还需 ' : '还剩 ') + fmtDur(rt.eta_h) + '）</span>';
   } else {
-    etaEl.className = 'eta idle';
-    etaEl.innerHTML = '<span class="big">静置中</span><span>电流接近 0，暂时算不出充满/放完时间</span>';
+    etaTxt.innerHTML = '<span class="big">静置中</span><span>电流接近 0，暂时算不出充满/放完时间</span>';
   }
   etaEl.style.display = 'flex';
 
