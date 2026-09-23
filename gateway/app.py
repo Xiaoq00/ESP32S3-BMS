@@ -23,6 +23,8 @@ RES_OHM_SCALE = 0.001
 HIST_TREND_BYTES = 160 * 1024
 # /api/history?range=day 的窗口: 12MB 从 ~39h 降到 ~28.5h(够一天但余量少), 提到 16MB(~40h)。
 HIST_DAY_BYTES   = 16 * 1024 * 1024
+# 「充满/放完」预测用的电流均值窗口(秒)。太短会被瞬时波动带偏, 太长反应迟钝。
+RATE_WINDOW_S    = 300
 
 state = {"cells": [], "total": 0.0, "min": 0.0, "max": 0.0, "bal": 0.0, "rssi": 0,
          "cell_res_raw": [], "cell_res_alert": 0, "online": False}
@@ -199,7 +201,7 @@ def summary():
     out = {"online": False, "updated_at": None, "age_seconds": None,
            "pack": {}, "cells": [], "cell_stats": {}, "rssi": 0,
            "cell_res": [], "cell_res_raw": [], "cell_res_alert": 0, "res_stats": {},
-           "trend": {}, "summary_text": "暂无电池数据"}
+           "trend": {}, "rate": {}, "summary_text": "暂无电池数据"}
     if not os.path.exists(latest_path):
         return json.dumps(out, ensure_ascii=False)
     try:
@@ -249,6 +251,7 @@ def summary():
 
     # 趋势：只读 history.jsonl 末尾若干字节(窗口见 HIST_TREND_BYTES)，避免整文件载入
     trend = {}
+    samples = []
     try:
         with open(hist_path, "rb") as f:
             f.seek(0, 2); size = f.tell(); f.seek(max(0, size-HIST_TREND_BYTES))
@@ -276,6 +279,33 @@ def summary():
     except Exception:
         pass
     out["trend"] = trend
+
+    # ===== 充放电速率与「充满 / 放完」预测 =====
+    # 用最近 RATE_WINDOW_S 秒的电流均值(比瞬时值稳得多)，再按剩余/待充电量推算时间。
+    # 约定: 电流为正是充电、为负是放电(已用水壶负载实验确认)。
+    rate = {"mode": "idle", "avg_a": 0.0, "window_s": 0, "eta_h": None, "eta_at": None}
+    try:
+        cut_r = now - RATE_WINDOW_S
+        w = [s for s in samples if (s.get("ts") or 0) >= cut_r]
+        cur = [s.get("current") for s in w if s.get("current") is not None]
+        if len(cur) >= 5:
+            avg = sum(cur) / len(cur)
+            tot = d.get("total_ah") or 0.0
+            rem = d.get("remaining_ah") or 0.0
+            rate["avg_a"] = round(avg, 2)
+            rate["window_s"] = int(now - (w[0].get("ts") or now))
+            if avg > 0.3 and tot > 0:                 # 充电中
+                rate["mode"] = "charging"
+                rate["eta_h"] = round(max(0.0, tot - rem) / avg, 2)
+            elif avg < -0.3 and rem > 0:              # 放电中
+                rate["mode"] = "discharging"
+                rate["eta_h"] = round(rem / abs(avg), 2)
+            if rate["eta_h"] is not None:
+                rate["eta_at"] = datetime.datetime.fromtimestamp(
+                    now + rate["eta_h"] * 3600).strftime("%H:%M")
+    except Exception:
+        pass
+    out["rate"] = rate
 
     # 中文一句话总结（agent 可直接复述给用户）
     if not out["online"]:

@@ -76,6 +76,16 @@
   .alert.warn{background:#fff8e6;border:1px solid #f0d48a;color:#8a6100}
   .alert.bad{background:#fdecec;border:1px solid #f3b7b7;color:#a02323}
 
+  /* 充满 / 放完 预测 */
+  .eta{border-radius:14px;padding:12px 14px;margin-bottom:12px;
+    font-size:var(--lbl);line-height:1.5;font-weight:600;
+    display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+  .eta .big{font-size:var(--mid);font-weight:800}
+  .eta b{font-weight:800}
+  .eta.chg{background:#e9f7ef;border:1px solid #b7e4c7;color:#1b6b3a}
+  .eta.dis{background:#fdf0e6;border:1px solid #f5cfa8;color:#8a4b00}
+  .eta.idle{background:#f1f5f9;border:1px solid #dbe3ea;color:#5b6b7c}
+
   /* 波形 */
   .tabs{display:flex;gap:8px;margin:4px 0 10px}
   .tab{flex:1;border:1px solid var(--line);background:#f6f9fc;color:var(--mut);
@@ -122,6 +132,9 @@
       <div class="sub" style="font-size:14px;color:var(--mut);margin-top:8px" id="capLine">容量 -- / -- Ah</div>
     </div>
   </div>
+
+  <!-- 充满 / 放完 预测 -->
+  <div class="eta" id="eta" style="display:none"></div>
 
   <!-- 指标网格 -->
   <div class="grid">
@@ -193,6 +206,7 @@ const DEMO = {
   cell_res_raw:[372,368,381,365,359,360,412,388,371,369,366,358,363,361,367,364,370,362,359,374],
   cell_res_alert:0,
   res_stats:{min_ohm:0.358,max_ohm:0.412,mean_ohm:0.370,median_ohm:0.366,max_cell:7,min_cell:12,scale:0.001},
+  rate:{mode:"discharging", avg_a:-23.4, window_s:300, eta_h:5.03, eta_at:"18:14"},
   rssi:-61,
   summary_text:"电池在线，最后更新于刚刚。总电压 66.71V，放电 23.4A，SOC 99%，剩余 117.8Ah。20芯电压 3.332~3.351V，压差 19mV，均衡良好。温度1 断线，温度2 35.2℃。"
 };
@@ -290,6 +304,30 @@ async function load(){
   } else { $('curV').textContent='--'; $('curV').className='v'; }
   if(p.power!=null){ $('powV').textContent = '功率 '+Math.abs(p.power).toFixed(0)+' W'; }
   else { $('powV').textContent='功率 -- W'; }
+
+  // ===== 充满 / 放完 预测 =====
+  // 后端 /api/summary 的 rate 块给出: mode(charging/discharging/idle)、avg_a(近5分钟电流均值)、eta_h、eta_at
+  const etaEl = $('eta');
+  const rt = j.rate || {};
+  const fmtDur = h => {
+    const H = Math.floor(h), M = Math.round((h - H) * 60);
+    return H > 0 ? (H + ' 小时 ' + (M < 10 ? '0' : '') + M + ' 分') : (M + ' 分钟');
+  };
+  if((rt.mode === 'charging' || rt.mode === 'discharging')
+     && rt.eta_h != null && isFinite(rt.eta_h) && rt.eta_h > 0){
+    const when = new Date(Date.now() + rt.eta_h * 3600000);
+    const hhmm = ('0'+when.getHours()).slice(-2) + ':' + ('0'+when.getMinutes()).slice(-2);
+    const chg = (rt.mode === 'charging');
+    etaEl.className = 'eta ' + (chg ? 'chg' : 'dis');
+    etaEl.innerHTML = '<span class="big">' + (chg ? '充电中 ' : '放电中 ') +
+      Number(rt.avg_a).toFixed(1) + ' A</span>' +
+      '<span>预计 <b>' + hhmm + '</b> ' + (chg ? '充满' : '放完') + '</span>' +
+      '<span>（' + (chg ? '还需 ' : '还剩 ') + fmtDur(rt.eta_h) + '）</span>';
+  } else {
+    etaEl.className = 'eta idle';
+    etaEl.innerHTML = '<span class="big">静置中</span><span>电流接近 0，暂时算不出充满/放完时间</span>';
+  }
+  etaEl.style.display = 'flex';
 
   // 温度（temp1 哨兵 -200=断线）
   const t1 = p.temp1, t2 = p.temp2;
