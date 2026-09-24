@@ -4,7 +4,7 @@
 # 运行：pip3 install -r requirements.txt && python3 app.py
 import json, threading, os, time, datetime
 import paho.mqtt.client as mqtt
-from flask import Flask, request
+from flask import Flask, request, send_file
 
 BROKER = "127.0.0.1"   # 若 Mosquitto 在容器/其他地址请改
 PORT   = 1883
@@ -469,6 +469,28 @@ def history():
             pass
 
     return json.dumps(out, ensure_ascii=False)
+
+# ===== OTA 固件分发（给 ESP32 自动升级用）=====
+# 设备开机 90 秒后、以及之后每 6 小时，GET /fw/version 比对版本号；
+# 与自身 FW_VERSION 不同就 GET /fw/firmware.bin 下载并自刷（自动重启）。
+OTA_DIR = os.path.join(DATA_DIR, "fw")
+
+@app.route("/fw/version")
+@app.route("/bms/fw/version")
+def fw_version():
+    try:
+        with open(os.path.join(OTA_DIR, "version")) as f:
+            return f.read().strip() or "none"
+    except Exception:
+        return "none"
+
+@app.route("/fw/firmware.bin")
+@app.route("/bms/fw/firmware.bin")
+def fw_bin():
+    p = os.path.join(OTA_DIR, "firmware.bin")
+    if not os.path.exists(p):
+        return "no firmware", 404
+    return send_file(p, mimetype="application/octet-stream")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8899)

@@ -23,6 +23,9 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <stdarg.h>
+#include <ArduinoOTA.h>      // WiFi 空中升级（电脑手动推）
+#include <HTTPClient.h>      // HTTP 客户端
+#include <HTTPUpdate.h>      // HTTP 自动升级（从小主机拉新固件自刷）
 
 // ===== 部署前请修改以下“配置区”常量（不要提交真实密码到公开仓库）=====
 #define BMS_MAC       "AA:BB:CC:DD:EE:FF"   // 你的 BMS 蓝牙 MAC（在 JK App 设备信息里看）
@@ -47,6 +50,17 @@
 //    会把 history.jsonl 的读取窗口(按字节)击穿, 拖垮 /api/history。
 #define PUB_RAW_FRAME  0
 #define MQTT_TOPIC_RAW "jk-bms/telemetry-raw"
+
+// ---- OTA 空中升级（★ 以后不用再插 USB）----
+// 用法：改下面的 FW_VERSION 字符串 → 重新编译 → 把产物放到小主机的 /opt/jk-bms/fw/firmware.bin
+//      同时把版本号写进 /opt/jk-bms/fw/version → 设备会在下次检查时自己下载并刷入。
+// 也可以手动推：电脑上 arduino-cli upload -p <设备IP> ...
+#define FW_VERSION      "v20.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
+#define OTA_HOSTNAME    "jk-esp32c3"        // 手动推送时用的主机名
+#define OTA_VER_URL     "http://192.168.1.26:8899/fw/version"       // 版本号文件
+#define OTA_BIN_URL     "http://192.168.1.26:8899/fw/firmware.bin"  // 固件文件
+#define OTA_CHECK_MS        (6UL * 3600UL * 1000UL)   // 自动检查周期：6 小时
+#define OTA_CHECK_BOOT_MS   (90UL * 1000UL)           // 开机后 90 秒先查一次
 
 // 设备密码(JK App 设置密码): 6 位, 作为 uint32 发送(命令 0x05)解锁写权限
 // 本板 V20.27 写设置前必须先发密码, 否则 BMS 静默忽略写入(实测: 不发密码写 0x0E 读回不变)。
@@ -408,9 +422,48 @@ class JkClientCb : public BLEClientCallbacks {
   void onDisconnect(BLEClient* p) override { (void)p; deviceConnected=false; g_subbed=false; g_triedF=false; g_tried10=false; g_encrypted=false; g_cmdState=0; doConnect=true; BLESecurity::resetSecurity(); Serial.println(">>> [CONN] 断开, 重连"); }
 };
 
+// ===== OTA 自动升级：定期查小主机上的版本号，不同就下载刷入 =====
+// 成功的话 httpUpdate 会自动重启，走不到函数末尾。
+// 失败（网络差/文件坏）就静默跳过，下次再试 —— 不会影响正常运行。
+static void otaTick() {
+  static unsigned long t0 = 0;
+  unsigned long now = millis();
+  if (t0 == 0) t0 = now;
+  unsigned long wait = (now < OTA_CHECK_BOOT_MS) ? OTA_CHECK_BOOT_MS : OTA_CHECK_MS;
+  if (now - t0 < wait) return;
+  t0 = now;
+
+  Serial.printf(">>> [OTA] 检查版本 %s ...\n", OTA_VER_URL);
+  WiFiClient c;
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.begin(c, OTA_VER_URL);
+  int code = http.GET();
+  if (code != 200) {
+    Serial.printf(">>> [OTA] 版本查询失败 HTTP %d（跳过，下次再试）\n", code);
+    http.end();
+    return;
+  }
+  String ver = http.getString();
+  http.end();
+  ver.trim();
+  Serial.printf(">>> [OTA] 服务器=%s 本机=%s\n", ver.c_str(), FW_VERSION);
+  if (ver.length() == 0 || ver == FW_VERSION) { Serial.println(">>> [OTA] 已是最新，无需升级"); return; }
+
+  Serial.println(">>> [OTA] 发现新版本，开始下载并升级（约 10~20 秒，期间数据会中断）...");
+  WiFiClient c2;
+  t_httpUpdate_return r = httpUpdate.update(c2, OTA_BIN_URL, FW_VERSION);
+  if (r == HTTP_UPDATE_FAILED)
+    Serial.printf(">>> [OTA] 升级失败: %s（保持当前固件继续运行）\n",
+                  httpUpdate.getLastErrorString().c_str());
+  else if (r == HTTP_UPDATE_NO_UPDATES)
+    Serial.println(">>> [OTA] 服务器说无需更新");
+  // HTTP_UPDATE_OK：会自动重启，不会执行到这里
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD); delay(150);
-  Serial.println("\n=== JK-BMS ESP32-S3 V20.27 读取器 v19.2 (+WiFi/MQTT/写前密码解锁) BOOT ===");
+  Serial.printf("\n=== JK-BMS 读取器 %s (ESP32-C3, +WiFi/MQTT/线阻/OTA) BOOT ===\n", FW_VERSION);
   delay(2000);
   // WiFi STA
   WiFi.mode(WIFI_STA);
@@ -420,6 +473,17 @@ void setup() {
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setBufferSize(2048);
   mqtt.setCallback(mqttCb);
+  // ===== OTA 空中升级 =====
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.onStart([]() { Serial.println("\n>>> [OTA] 开始升级..."); });
+  ArduinoOTA.onEnd([]()   { Serial.println("\n>>> [OTA] 升级完成，即将重启"); });
+  ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
+    Serial.printf(">>> [OTA] 进度 %u%%\r", t ? (p * 100 / t) : 0);
+  });
+  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("\n>>> [OTA] 出错 code=%u\n", (unsigned)e); });
+  ArduinoOTA.begin();
+  Serial.printf(">>> [OTA] 就绪：版本 %s，主机名 %s（可用 arduino-cli upload -p %s 推送）\n",
+                FW_VERSION, OTA_HOSTNAME, OTA_HOSTNAME);
   // BLE
   BLEDevice::init("jk-esp32c3");
   pClient = BLEDevice::createClient();
@@ -455,6 +519,8 @@ void loop() {
       }
     } else {
       mqtt.loop();
+      ArduinoOTA.handle();   // 处理"电脑手动推送"的 OTA 请求
+      otaTick();             // 定期查小主机上的新固件，自动升级
       if (g_hasData && (millis()-g_lastPublish > PUBLISH_MS)) {
         g_lastPublish = millis();
         publishTelemetry();
