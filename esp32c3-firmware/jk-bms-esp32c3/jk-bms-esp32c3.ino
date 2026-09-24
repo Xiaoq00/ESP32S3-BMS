@@ -55,7 +55,7 @@
 // 用法：改下面的 FW_VERSION 字符串 → 重新编译 → 把产物放到小主机的 /opt/jk-bms/fw/firmware.bin
 //      同时把版本号写进 /opt/jk-bms/fw/version → 设备会在下次检查时自己下载并刷入。
 // 也可以手动推：电脑上 arduino-cli upload -p <设备IP> ...
-#define FW_VERSION      "v23.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
+#define FW_VERSION      "v24.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
 #define OTA_HOSTNAME    "jk-esp32c3"        // 手动推送时用的主机名
 #define OTA_VER_URL     "http://192.168.1.26:8899/fw/version"       // 版本号文件
 #define OTA_BIN_URL     "http://192.168.1.26:8899/fw/firmware.bin"  // 固件文件
