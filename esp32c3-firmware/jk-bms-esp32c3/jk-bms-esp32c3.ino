@@ -55,7 +55,7 @@
 // 用法：改下面的 FW_VERSION 字符串 → 重新编译 → 把产物放到小主机的 /opt/jk-bms/fw/firmware.bin
 //      同时把版本号写进 /opt/jk-bms/fw/version → 设备会在下次检查时自己下载并刷入。
 // 也可以手动推：电脑上 arduino-cli upload -p <设备IP> ...
-#define FW_VERSION      "v22.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
+#define FW_VERSION      "v23.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
 #define OTA_HOSTNAME    "jk-esp32c3"        // 手动推送时用的主机名
 #define OTA_VER_URL     "http://192.168.1.26:8899/fw/version"       // 版本号文件
 #define OTA_BIN_URL     "http://192.168.1.26:8899/fw/firmware.bin"  // 固件文件
@@ -428,11 +428,16 @@ class JkClientCb : public BLEClientCallbacks {
 // 失败（网络差/文件坏）就静默跳过，下次再试 —— 不会影响正常运行。
 static void otaTick() {
   static unsigned long t0 = 0;
+  static int n = 0;                  // 已检查次数
   unsigned long now = millis();
   if (t0 == 0) t0 = now;
-  unsigned long wait = (now < OTA_CHECK_BOOT_MS) ? OTA_CHECK_BOOT_MS : OTA_CHECK_MS;
-  if (now - t0 < wait) return;
-  t0 = now;
+  // ★ 必须按"已等多久"选间隔，不能按"当前时刻"选：
+  //   原来写成 (now < 90s ? 90s : 6h)，一旦 now 超过 90s 就跳到 6h，
+  //   导致"开机检查"永远不触发（要等满 6 小时）—— 这就是 OTA 一直不生效的原因。
+  //   前 5 次用短间隔（90 秒），之后才是 6 小时；这样断电重启后 2 分钟内就能拿到新版本。
+  unsigned long need = (n < 5) ? OTA_CHECK_BOOT_MS : OTA_CHECK_MS;
+  if (now - t0 < need) return;
+  t0 = now; n++;
 
   Serial.printf(">>> [OTA] 检查版本 %s ...\n", OTA_VER_URL);
   WiFiClient c;
