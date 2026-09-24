@@ -171,7 +171,7 @@
       <span><i style="background:var(--ok)"></i>均衡好</span>
       <span><i style="background:var(--warn)"></i>略有偏差</span>
       <span><i style="background:var(--bad)"></i>偏差大</span>
-      <span style="color:var(--mut)">小字 = 均衡线电阻（参考值）</span>
+      <span style="color:var(--mut)">小字 = 均衡线电阻 mΩ（正常 45~75）</span>
     </div>
     <div class="cells" id="cells"></div>
   </div>
@@ -387,7 +387,9 @@ async function load(){
     const alerted = ((alertMask>>>i)&1)===1;   // BMS 原生报警优先(厂商判断, 不依赖我们的换算)
     const rcol = alerted ? 'var(--bad)' : colorForRes(rv, resMed);
     const rcls = alerted ? 'b' : resClass(rv, resMed);
-    const rtxt = (rv!=null && isFinite(rv)) ? rv.toFixed(2)+' Ω' : '—';
+    // 单位用 mΩ（与官方 App 一致：App 资源里有 "(mΩ)" 这个单位串）。
+    // raw 值本身就是 mΩ（raw × 0.001 = Ω），所以这里 rv(Ω) × 1000 就是 mΩ。
+    const rtxt = (rv!=null && isFinite(rv)) ? Math.round(rv*1000)+' mΩ' : '—';
     const el = document.createElement('div'); el.className='cell';
     el.innerHTML = '<div class="n">第'+(i+1)+'节</div><div class="vv" style="color:'+col+'">'+Number(v).toFixed(3)+'</div>'+
       '<div class="rr '+rcls+'" style="color:'+rcol+'">'+rtxt+'</div>';
