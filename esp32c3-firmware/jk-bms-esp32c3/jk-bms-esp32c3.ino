@@ -55,7 +55,7 @@
 // 用法：改下面的 FW_VERSION 字符串 → 重新编译 → 把产物放到小主机的 /opt/jk-bms/fw/firmware.bin
 //      同时把版本号写进 /opt/jk-bms/fw/version → 设备会在下次检查时自己下载并刷入。
 // 也可以手动推：电脑上 arduino-cli upload -p <设备IP> ...
-#define FW_VERSION      "v20.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
+#define FW_VERSION      "v21.20260924"      // ★ 当前固件版本（改这里 = 发布新版本）
 #define OTA_HOSTNAME    "jk-esp32c3"        // 手动推送时用的主机名
 #define OTA_VER_URL     "http://192.168.1.26:8899/fw/version"       // 版本号文件
 #define OTA_BIN_URL     "http://192.168.1.26:8899/fw/firmware.bin"  // 固件文件
@@ -500,8 +500,20 @@ void setup() {
 void loop() {
   // ===== WiFi / MQTT 维护 + 发布 =====
   if (WiFi.status() != WL_CONNECTED) {
+    // 只在"确实没在连"时才重连：WL_DISCONNECTED(6) 表示"正在连"，此时反复 begin()
+    // 会打断连接并报 "sta is connecting, cannot set config"。原来 5 秒无条件 begin() 就是这个毛病。
     static unsigned long wt=0;
-    if (millis()-wt > 5000) { wt=millis(); Serial.println(">>> [WIFI] 未连, 重试..."); WiFi.begin(WIFI_SSID, WIFI_PASS); }
+    if (millis()-wt > 20000) {
+      wt=millis();
+      wl_status_t st = WiFi.status();
+      if (st == WL_IDLE_STATUS || st == WL_NO_SSID_AVAIL || st == WL_CONNECT_FAILED) {
+        Serial.printf(">>> [WIFI] 未连(状态=%d), 重连...\n", (int)st);
+        WiFi.disconnect(false, false); delay(50);
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
+      } else {
+        Serial.printf(">>> [WIFI] 连接中(状态=%d), 继续等待\n", (int)st);
+      }
+    }
   } else {
     if (!mqtt.connected()) {
       static unsigned long mt=0;
