@@ -400,7 +400,7 @@ async function load(){
   const foot = $('foot');
   if(demo){ foot.style.color='var(--warn)'; foot.textContent='⚠ 接口暂不可用，当前显示演示数据'; }
   else if(errMsg){ foot.style.color='var(--mut)'; foot.textContent='实时数据已连接（部分接口异常：'+errMsg+'）'; }
-  else if(j.online && j.age_seconds!=null && j.updated_at){ foot.style.color='var(--mut)'; foot.textContent='每 3 秒自动刷新 · 更新于 '+j.updated_at+'（'+j.age_seconds+' 秒前）'; }
+  else if(j.online && j.age_seconds!=null && j.updated_at){ foot.style.color='var(--mut)'; foot.textContent='每 3 秒自动刷新 · 更新于 '+j.updated_at+'（'+j.age_seconds+' 秒前）'+(j.fw?' · 固件 '+j.fw:''); }
   else if(!j.online){ foot.style.color='var(--bad)'; foot.textContent='电瓶当前离线'+(j.updated_at?'，最后更新 '+j.updated_at:''); }
   else { foot.style.color='var(--mut)'; foot.textContent='每 3 秒自动刷新'; }
 

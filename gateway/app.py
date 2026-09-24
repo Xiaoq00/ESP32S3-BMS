@@ -50,7 +50,7 @@ def on_message(cli, userdata, msg):
         with lock:
             # 白名单: 新字段不加进来就会"静默透不出"(不报错, 最难查)
             for k in ("cells", "total", "min", "max", "bal", "rssi",
-                      "cell_res_raw", "cell_res_alert"):
+                      "cell_res_raw", "cell_res_alert", "fw"):
                 if k in d: state[k] = d[k]
             state["online"] = bool(d.get("online", True))
     except Exception as e:
@@ -217,6 +217,7 @@ def summary():
     out["updated_at"] = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
     out["age_seconds"] = age
     out["rssi"] = d.get("rssi", 0)
+    out["fw"] = d.get("fw")          # 设备固件版本（OTA 验证用）
 
     pack = {}
     for k in ("voltage","current","power","soc","remaining_ah","total_ah","temp1","temp2"):
