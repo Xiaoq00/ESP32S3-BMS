@@ -61,6 +61,13 @@
   .eta.dis{background:#fdf6ee;color:#8a4b00}
   .eta.idle{background:#f8fafc;color:#5b6b7c}
 
+  /* 电量收支（今日 / 近24h） */
+  .bal{margin:0 -16px;padding:11px 16px;border-top:1px solid var(--hair);
+    background:#fbfcfd;color:var(--mut);font-size:13px;
+    display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
+  .bal b{font-weight:700;color:var(--fg)}
+  .bal .pos b{color:var(--ok)} .bal .neg b{color:var(--bad)}
+
   /* 四个指标：不要卡片壳，只用竖线分隔 */
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:var(--s3)}
   .kpi{padding:0 10px;display:flex;flex-direction:column;gap:2px;border-left:1px solid #dfe6ed}
@@ -134,6 +141,8 @@
     </div>
     <!-- 充满/放完预测：文字元素常驻，只更新 #etaTxt，避免每 3 秒刷新打断 -->
     <div class="eta idle" id="eta" style="display:none"><span id="etaTxt"></span></div>
+    <!-- 电量收支：今天在充还是在亏 -->
+    <div class="bal" id="bal" style="display:none"></div>
   </section>
 
   <!-- 四个指标：去掉卡片壳，只用竖线分隔 -->
@@ -191,6 +200,8 @@ const DEMO = {
   cell_res_alert:0,
   res_stats:{min_ohm:0.358,max_ohm:0.412,mean_ohm:0.370,median_ohm:0.366,max_cell:7,min_cell:12,scale:0.001},
   rate:{mode:"discharging", avg_a:-23.4, window_s:300, eta_h:5.03, eta_at:"18:14"},
+  balance:{at:"2026-09-24 13:00", today_chg_ah:19.6, today_dis_ah:14.8, today_net_ah:4.9,
+           h24_chg_ah:26.4, h24_dis_ah:42.0, h24_net_ah:-15.6, warn:"近24h净亏15.6Ah"},
   rssi:-61,
   summary_text:"电池在线，最后更新于刚刚。总电压 66.71V，放电 23.4A，SOC 99%，剩余 117.8Ah。20芯电压 3.332~3.351V，压差 19mV，均衡良好。温度1 断线，温度2 35.2℃。"
 };
@@ -315,6 +326,21 @@ async function load(){
     etaTxt.innerHTML = '<span class="big">静置中</span><span>电流接近 0，暂时算不出充满/放完时间</span>';
   }
   etaEl.style.display = 'flex';
+
+  // ===== 电量收支（今日 / 近24h）—— 一眼看出在充还是在亏 =====
+  const balEl = $('bal'), bal = j.balance || {};
+  if(bal.today_net_ah != null){
+    const sg = v => (v >= 0 ? '+' : '') + Number(v).toFixed(1);
+    const cc = v => (v >= 0 ? 'pos' : 'neg');
+    balEl.innerHTML =
+      '<span>今日 充'+Number(bal.today_chg_ah).toFixed(1)+' 放'+Number(bal.today_dis_ah).toFixed(1)+
+      ' 净<span class="'+cc(bal.today_net_ah)+'"><b>'+sg(bal.today_net_ah)+'</b></span> Ah</span>' +
+      '<span>近24h 净<span class="'+cc(bal.h24_net_ah)+'"><b>'+sg(bal.h24_net_ah)+'</b></span> Ah</span>' +
+      (bal.warn && bal.warn !== '正常' ? '<span class="neg">⚠ '+bal.warn+'</span>' : '');
+    balEl.style.display = 'flex';
+  } else {
+    balEl.style.display = 'none';
+  }
 
   // 温度（temp1 哨兵 -200=断线）
   const t1 = p.temp1, t2 = p.temp2;

@@ -201,7 +201,7 @@ def summary():
     out = {"online": False, "updated_at": None, "age_seconds": None,
            "pack": {}, "cells": [], "cell_stats": {}, "rssi": 0,
            "cell_res": [], "cell_res_raw": [], "cell_res_alert": 0, "res_stats": {},
-           "trend": {}, "rate": {}, "summary_text": "暂无电池数据"}
+           "trend": {}, "rate": {}, "balance": {}, "summary_text": "暂无电池数据"}
     if not os.path.exists(latest_path):
         return json.dumps(out, ensure_ascii=False)
     try:
@@ -307,6 +307,24 @@ def summary():
     except Exception:
         pass
     out["rate"] = rate
+
+    # ===== 电量收支（读 balance_watch.py 每小时写的 CSV 最后一行）=====
+    # 用途：一眼看出这组电池是在充还是在亏（亏 = 光伏配小了 / 负载重了，不是电池坏）
+    bal = {}
+    try:
+        bp = os.path.join(DATA_DIR, "balance", "balance-%s.csv" % datetime.datetime.now().strftime("%Y%m%d"))
+        with open(bp, encoding="utf-8") as f:
+            lines = [x for x in f.read().splitlines() if x.strip()]
+        if len(lines) >= 2:
+            v = lines[-1].split(",")
+            if len(v) >= 11:
+                bal = {"at": v[0],
+                       "today_chg_ah": float(v[1]), "today_dis_ah": float(v[2]), "today_net_ah": float(v[3]),
+                       "h24_chg_ah": float(v[4]), "h24_dis_ah": float(v[5]), "h24_net_ah": float(v[6]),
+                       "warn": v[10]}
+    except Exception:
+        pass
+    out["balance"] = bal
 
     # 中文一句话总结（agent 可直接复述给用户）
     if not out["online"]:
