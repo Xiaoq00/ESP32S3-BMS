@@ -1,0 +1,8 @@
+[Unit]
+Description=JK-BMS 电量收支观测哨（每小时一行，看净亏还是净赚）
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jk-bms
+ExecStart=/opt/jk-bms/venv/bin/python /opt/jk-bms/balance_watch.py
